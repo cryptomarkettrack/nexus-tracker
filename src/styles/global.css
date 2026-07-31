@@ -553,38 +553,155 @@ button:disabled {
   min-height: 0;
 }
 
-.grid-focus {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 280px;
-  grid-template-rows: minmax(0, 1fr) auto;
-  gap: 10px;
-  height: 100%;
-  min-height: 0;
-}
-
+/* Focus layout: top nav → chart (flex) → resizer → trade desk (fixed height) */
 .mode-view--focus {
   height: 100%;
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  gap: 0;
 }
 
-.mode-view--focus .grid-focus {
+.focus-nav {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+  position: relative;
+  z-index: 20;
+  min-width: 0;
+}
+
+.focus-nav__identity {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.focus-nav__pair {
+  font-family: var(--font-ui);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.focus-nav__price {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.focus-nav__chg {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.9;
+}
+
+.focus-nav__search {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 420px;
+  margin-left: auto;
+}
+
+.focus-nav__input {
+  width: 100%;
+}
+
+.focus-nav__dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: min(280px, 40vh);
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-0);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  z-index: 30;
+}
+
+.focus-nav__empty {
+  padding: 12px;
+  font-size: 11px;
+}
+
+.focus-nav__hit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.focus-nav__hit:last-child {
+  border-bottom: 0;
+}
+
+.focus-nav__hit:hover,
+.focus-nav__hit:focus-visible {
+  background: rgba(255, 255, 255, 0.04);
+  outline: none;
+}
+
+.focus-nav__hit--active {
+  background: rgba(232, 185, 74, 0.08);
+}
+
+.focus-nav__hit strong {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.grid-focus {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
+  gap: 0;
+  height: 100%;
+}
+
+/* Chart + watch/context sidebar */
+.focus-main-row {
+  flex: 1 1 auto;
+  min-height: 120px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
+  gap: 10px;
+  min-width: 0;
 }
 
 .focus-chart-panel {
-  grid-column: 1;
-  grid-row: 1;
   min-height: 0;
+  min-width: 0;
   height: 100%;
 }
 
 .focus-chart-panel.panel {
   display: flex;
   flex-direction: column;
+  height: 100%;
+  min-height: 0;
 }
 
 .focus-chart-panel .panel-body {
@@ -601,18 +718,12 @@ button:disabled {
   position: relative;
 }
 
-/* Quick pairs above chart — mobile only (desktop uses Navigate panel) */
-.focus-mobile-toolbar {
-  display: none;
-}
-
 .focus-sidebar {
-  grid-column: 2;
-  grid-row: 1;
   display: flex;
   flex-direction: column;
   gap: 10px;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -630,18 +741,13 @@ button:disabled {
   overflow: hidden;
 }
 
-.focus-side--nav {
-  flex: 0 0 auto;
-  max-height: 32%;
-}
-
 .focus-side--zones {
-  flex: 1 1 40%;
+  flex: 1 1 58%;
   min-height: 0;
 }
 
 .focus-side--context {
-  flex: 1 1 28%;
+  flex: 1 1 42%;
   min-height: 0;
 }
 
@@ -655,20 +761,71 @@ button:disabled {
   min-height: 0;
 }
 
+.trade-desk-resizer {
+  flex: 0 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: row-resize;
+  touch-action: none;
+  user-select: none;
+  margin: 2px 0;
+  border-radius: 2px;
+}
+
+.trade-desk-resizer:hover,
+.trade-desk-resizer:focus-visible,
+body.is-resizing-desk .trade-desk-resizer {
+  background: rgba(232, 185, 74, 0.1);
+}
+
+.trade-desk-resizer__grip {
+  width: 40px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line-strong);
+}
+
+.trade-desk-resizer:hover .trade-desk-resizer__grip,
+body.is-resizing-desk .trade-desk-resizer__grip {
+  background: var(--amber);
+}
+
+body.is-resizing-desk {
+  cursor: row-resize !important;
+  user-select: none !important;
+}
+
+.trade-desk-shell {
+  flex: 0 0 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.trade-desk-shell > .trade-desk {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  max-height: none;
+}
+
 .trade-desk {
-  grid-column: 1 / -1;
-  grid-row: 2;
   min-height: 0;
 }
 
 .trade-desk.panel {
   display: flex;
   flex-direction: column;
+  height: 100%;
 }
 
 .trade-desk .panel-body {
   overflow: auto;
-  max-height: min(420px, 48vh);
+  flex: 1;
+  min-height: 0;
+  max-height: none;
 }
 
 .trade-desk-layout {
@@ -1092,97 +1249,59 @@ button:disabled {
   .grid-command .span-2 {
     grid-column: span 2;
   }
-  /* Focus: chart on top, full-width sections stacked below */
+  /* Focus keeps column flex; chart+sidebar flex, desk height from resizer */
   .mode-view--focus {
     height: 100%;
     min-height: 0;
-    overflow-x: hidden;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    display: block;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
   }
 
   .mode-view--focus .grid-focus {
     display: flex;
     flex-direction: column;
+    flex: 1;
+    min-height: 0;
     height: auto;
-    min-height: min-content;
-    flex: none;
-    gap: 10px;
   }
 
-  .focus-chart-panel {
-    grid-column: auto;
-    grid-row: auto;
-    height: auto;
-    flex: 0 0 auto;
+  .focus-main-row {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(220px, 1fr) auto;
     min-height: 0;
   }
 
-  .focus-chart-panel .panel-body {
-    flex: none;
+  .focus-chart-panel {
+    min-height: 200px;
   }
 
   .focus-chart-stage {
-    flex: none;
-    height: min(58vh, 520px);
-    min-height: 300px;
+    flex: 1;
+    min-height: 180px;
+  }
+
+  .focus-sidebar {
+    flex-direction: row;
+    max-height: min(240px, 32vh);
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .focus-sidebar > .panel {
+    flex: 1 1 50%;
+    min-width: min(240px, 80vw);
+    max-height: 100%;
+  }
+
+  .focus-side--zones,
+  .focus-side--context {
+    flex: 1 1 50%;
   }
 
   .chart-wrap--focus {
     height: 100%;
     min-height: 100%;
-  }
-
-  .focus-sidebar {
-    grid-column: auto;
-    grid-row: auto;
-    flex-direction: column;
-    flex-wrap: nowrap;
-    max-height: none;
-    overflow: visible;
-    height: auto;
-    gap: 10px;
-  }
-
-  .focus-sidebar > .panel {
-    flex: 0 0 auto;
-    max-height: none;
-    height: auto;
-  }
-
-  .focus-sidebar > .panel .panel-body {
-    flex: none;
-    overflow: visible;
-  }
-
-  .focus-side--nav,
-  .focus-side--zones,
-  .focus-side--context {
-    max-height: none;
-    flex: 0 0 auto;
-  }
-
-  .focus-side-scroll {
-    flex: none;
-    max-height: none;
-    overflow: visible;
-  }
-
-  .focus-side--nav .focus-side-scroll {
-    max-height: 200px;
-    overflow-y: auto;
-  }
-
-  .trade-desk {
-    grid-column: auto;
-    grid-row: auto;
-    flex: 0 0 auto;
-  }
-
-  .trade-desk .panel-body {
-    max-height: none;
-    overflow: visible;
   }
 
   .trade-desk-layout {
@@ -1353,11 +1472,6 @@ button:disabled {
     white-space: normal;
   }
 
-  .focus-chart-stage {
-    height: min(52vh, 440px);
-    min-height: 280px;
-  }
-
   .focus-chart-panel .panel-header {
     align-items: flex-start;
     gap: 6px;
@@ -1376,13 +1490,16 @@ button:disabled {
     padding: 6px 10px;
   }
 
-  .focus-mobile-toolbar {
-    display: block;
-    padding: 8px 10px 0;
+  .focus-nav {
+    flex-wrap: wrap;
+    gap: 8px;
   }
 
-  .focus-side--nav .focus-nav-quick {
-    display: none; /* pairs already in toolbar above chart */
+  .focus-nav__search {
+    max-width: none;
+    flex: 1 1 100%;
+    margin-left: 0;
+    order: -1;
   }
 
   .footer-note {
@@ -1516,17 +1633,19 @@ button:disabled {
   }
 
   .mode-view--focus {
-    height: auto;
-    min-height: 100%;
-    /* .main is the scroll container on phone */
-    overflow: visible;
-    display: block;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
     padding: 6px;
-    padding-bottom: 16px;
+    padding-bottom: 8px;
   }
 
   .mode-view--focus .grid-focus {
-    gap: 8px;
+    flex: 1;
+    min-height: 0;
+    gap: 0;
   }
 
   .panel-header {
@@ -1619,7 +1738,7 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
-  /* —— Focus phone: chart dominates, sections below —— */
+  /* —— Focus phone: nav + chart + resizable desk —— */
   .focus-chart-panel .panel-header {
     flex-direction: column;
     align-items: stretch;
@@ -1644,10 +1763,37 @@ button:disabled {
   }
 
   .focus-chart-stage {
-    /* Chart owns most of the first screen; scroll for panels below */
-    height: 58dvh;
-    min-height: 300px;
-    max-height: 560px;
+    flex: 1;
+    min-height: 140px;
+    height: auto;
+    max-height: none;
+  }
+
+  .focus-main-row {
+    grid-template-rows: minmax(160px, 1fr) auto;
+  }
+
+  .focus-sidebar {
+    flex-direction: column;
+    max-height: min(320px, 40vh);
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .focus-sidebar > .panel {
+    flex: 0 0 auto;
+    min-width: 0;
+    max-height: none;
+  }
+
+  .focus-side--zones,
+  .focus-side--context {
+    flex: 0 0 auto;
+    max-height: 180px;
+  }
+
+  .focus-side-scroll {
+    max-height: 140px;
   }
 
   .chart-wrap {
@@ -1658,23 +1804,8 @@ button:disabled {
     min-height: 100%;
   }
 
-  .focus-sidebar {
-    flex-direction: column;
-  }
-
-  .focus-sidebar > .panel {
-    flex: 0 0 auto;
-    max-height: none;
-  }
-
-  .focus-side--nav .focus-side-scroll {
-    max-height: 180px;
-    overflow-y: auto;
-  }
-
-  .focus-side--zones,
-  .focus-side--context {
-    max-height: none;
+  .trade-desk-resizer {
+    flex-basis: 14px;
   }
 
   .zone-band {

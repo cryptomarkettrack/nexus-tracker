@@ -4,6 +4,8 @@ import { positionPnl } from './tradePlan'
 export type CloseReason = NonNullable<Position['closeReason']>
 
 export const AUTO_MIN_CONFIDENCE = 55
+/** Paper notional used for every autopilot open */
+export const AUTO_SIZE_USD = 10_000
 /** Minutes after a close before auto may re-enter the same symbol */
 export const AUTO_COOLDOWN_MIN = 20
 /** Max auto backfill trades to inject when catching up */

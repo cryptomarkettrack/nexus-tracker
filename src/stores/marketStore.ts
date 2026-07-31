@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import {
+  AUTO_SIZE_USD,
   backfillAutoTrades,
   decideAutoOpen,
   decideCandleExit,
@@ -413,7 +414,6 @@ export const useMarketStore = create<MarketState>((set, get) => ({
       positions,
       livePrice,
       tickers,
-      defaultSizeUsd,
       candles,
     } = get()
     if (!isAutoEnabled(autoBindings, focusSymbol)) return
@@ -466,7 +466,7 @@ export const useMarketStore = create<MarketState>((set, get) => ({
         symbol: focusSymbol,
         base: focusSymbol.replace('USDT', ''),
         candles,
-        sizeUsd: defaultSizeUsd,
+        sizeUsd: AUTO_SIZE_USD,
         interval: focusInterval,
         existing: get().positions,
       })
@@ -489,7 +489,7 @@ export const useMarketStore = create<MarketState>((set, get) => ({
         stop: plan.stop,
         target1: plan.target1,
         target2: plan.target2,
-        sizeUsd: defaultSizeUsd,
+        sizeUsd: AUTO_SIZE_USD,
         note: plan.reasons[0] ?? plan.trigger,
         openReason,
         interval: lockedInterval,
