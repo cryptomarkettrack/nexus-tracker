@@ -1249,11 +1249,21 @@ body.is-resizing-desk {
   .grid-command .span-2 {
     grid-column: span 2;
   }
-  /* Focus keeps column flex; chart+sidebar flex, desk height from resizer */
+
+  /* Allow the stacked focus page to scroll inside main */
+  .main {
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /*
+   * Focus tablet/mobile: natural vertical stack + page scroll.
+   * Avoids cramped flex heights that overflow/clip sections.
+   */
   .mode-view--focus {
-    height: 100%;
-    min-height: 0;
-    overflow: hidden;
+    height: auto;
+    min-height: 100%;
+    overflow: visible;
     display: flex;
     flex-direction: column;
   }
@@ -1261,47 +1271,107 @@ body.is-resizing-desk {
   .mode-view--focus .grid-focus {
     display: flex;
     flex-direction: column;
-    flex: 1;
-    min-height: 0;
+    flex: none;
     height: auto;
+    min-height: 0;
+    gap: 10px;
   }
 
   .focus-main-row {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(220px, 1fr) auto;
+    display: flex;
+    flex-direction: column;
+    flex: none;
+    height: auto;
     min-height: 0;
+    gap: 10px;
+    grid-template-columns: none;
+    grid-template-rows: none;
   }
 
   .focus-chart-panel {
-    min-height: 200px;
+    flex: none;
+    height: auto;
+    min-height: 0;
+  }
+
+  .focus-chart-panel.panel {
+    height: auto;
+  }
+
+  .focus-chart-panel .panel-body {
+    flex: none;
   }
 
   .focus-chart-stage {
-    flex: 1;
-    min-height: 180px;
+    flex: none;
+    height: min(48vh, 420px);
+    min-height: 260px;
   }
 
   .focus-sidebar {
-    flex-direction: row;
-    max-height: min(240px, 32vh);
-    overflow-x: auto;
-    overflow-y: hidden;
+    display: flex;
+    flex-direction: column;
+    flex: none;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    gap: 10px;
   }
 
   .focus-sidebar > .panel {
-    flex: 1 1 50%;
-    min-width: min(240px, 80vw);
-    max-height: 100%;
+    flex: none;
+    min-width: 0;
+    width: 100%;
+    max-height: none;
+    height: auto;
+  }
+
+  .focus-sidebar > .panel .panel-body {
+    flex: none;
+    overflow: visible;
   }
 
   .focus-side--zones,
   .focus-side--context {
-    flex: 1 1 50%;
+    flex: none;
+    max-height: none;
+  }
+
+  .focus-side-scroll {
+    flex: none;
+    max-height: none;
+    overflow: visible;
   }
 
   .chart-wrap--focus {
     height: 100%;
     min-height: 100%;
+  }
+
+  .trade-desk-shell {
+    /* override inline resized height — let desk grow with content */
+    height: auto !important;
+    flex: none;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .trade-desk-shell > .trade-desk {
+    height: auto;
+  }
+
+  .trade-desk.panel {
+    height: auto;
+  }
+
+  .trade-desk .panel-body {
+    flex: none;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .audit-list {
+    max-height: none;
   }
 
   .trade-desk-layout {
@@ -1633,19 +1703,20 @@ body.is-resizing-desk {
   }
 
   .mode-view--focus {
-    height: 100%;
-    min-height: 0;
-    overflow: hidden;
+    height: auto;
+    min-height: 100%;
+    overflow: visible;
     display: flex;
     flex-direction: column;
     padding: 6px;
-    padding-bottom: 8px;
+    padding-bottom: 16px;
   }
 
   .mode-view--focus .grid-focus {
-    flex: 1;
+    flex: none;
+    height: auto;
     min-height: 0;
-    gap: 0;
+    gap: 10px;
   }
 
   .panel-header {
@@ -1738,7 +1809,11 @@ body.is-resizing-desk {
     grid-template-columns: 1fr;
   }
 
-  /* —— Focus phone: nav + chart + resizable desk —— */
+  /* —— Focus phone: full vertical stack, page scrolls —— */
+  .focus-nav {
+    margin-bottom: 0;
+  }
+
   .focus-chart-panel .panel-header {
     flex-direction: column;
     align-items: stretch;
@@ -1763,37 +1838,41 @@ body.is-resizing-desk {
   }
 
   .focus-chart-stage {
-    flex: 1;
-    min-height: 140px;
-    height: auto;
-    max-height: none;
+    flex: none;
+    height: 42dvh;
+    min-height: 240px;
+    max-height: 380px;
   }
 
   .focus-main-row {
-    grid-template-rows: minmax(160px, 1fr) auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
   }
 
   .focus-sidebar {
+    display: flex;
     flex-direction: column;
-    max-height: min(320px, 40vh);
-    overflow-x: hidden;
-    overflow-y: auto;
+    max-height: none;
+    overflow: visible;
+    gap: 10px;
   }
 
   .focus-sidebar > .panel {
-    flex: 0 0 auto;
+    flex: none;
     min-width: 0;
     max-height: none;
   }
 
   .focus-side--zones,
   .focus-side--context {
-    flex: 0 0 auto;
-    max-height: 180px;
+    flex: none;
+    max-height: none;
   }
 
   .focus-side-scroll {
-    max-height: 140px;
+    max-height: none;
+    overflow: visible;
   }
 
   .chart-wrap {
@@ -1805,7 +1884,17 @@ body.is-resizing-desk {
   }
 
   .trade-desk-resizer {
-    flex-basis: 14px;
+    flex: 0 0 12px;
+    margin: 0;
+  }
+
+  .trade-desk-shell {
+    height: auto !important;
+    overflow: visible;
+  }
+
+  .trade-desk-layout {
+    grid-template-columns: 1fr;
   }
 
   .zone-band {
