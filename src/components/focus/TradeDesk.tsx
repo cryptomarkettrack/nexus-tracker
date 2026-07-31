@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   buildAuditLog,
-  closeReasonLabel,
   formatAuditTime,
   formatHeld,
+  formatOpenReason,
 } from '../../lib/auditLog'
-import { AUTO_MIN_CONFIDENCE, summarizeAutoPerf } from '../../lib/autoTrader'
+import { AUTO_MIN_CONFIDENCE, getAutoInterval, summarizeAutoPerf } from '../../lib/autoTrader'
 import { formatPrice } from '../../lib/indicators'
-import { buildTradePlan, positionPnl, rMultiple } from '../../lib/tradePlan'
+import { buildTradePlan, describePlanOpen, positionPnl, rMultiple } from '../../lib/tradePlan'
 import type { CoinMetrics, FundingInfo, MaLevel, Trendline, WatchZone } from '../../lib/types'
 import { useMarketStore } from '../../stores/marketStore'
 import { Panel, cn } from '../shared/utils'
@@ -36,13 +36,16 @@ export function TradeDesk({
   const positions = useMarketStore((s) => s.positions)
   const defaultSizeUsd = useMarketStore((s) => s.defaultSizeUsd)
   const setDefaultSizeUsd = useMarketStore((s) => s.setDefaultSizeUsd)
-  const autoSymbols = useMarketStore((s) => s.autoSymbols)
+  const autoBindings = useMarketStore((s) => s.autoBindings)
   const toggleAuto = useMarketStore((s) => s.toggleAuto)
   const runAutoForFocus = useMarketStore((s) => s.runAutoForFocus)
   const autoAwaySince = useMarketStore((s) => s.autoAwaySince)
+  const focusInterval = useMarketStore((s) => s.focusInterval)
   const [sizeDraft, setSizeDraft] = useState(String(defaultSizeUsd))
   const [auditScope, setAuditScope] = useState<'symbol' | 'all'>('symbol')
-  const autoOn = autoSymbols.includes(symbol)
+  const lockedInterval = getAutoInterval(autoBindings, symbol)
+  const autoOn = lockedInterval != null
+  const onLockedTf = autoOn && lockedInterval === focusInterval
   const lastAutoKey = useRef('')
 
   const plan = useMemo(() => {
@@ -59,17 +62,25 @@ export function TradeDesk({
     })
   }, [symbol, base, price, zones, maLevels, metric, funding, trendline])
 
-  // Drive paper autopilot on bias / position changes (exits also run via store tick)
+  // Drive paper autopilot only when viewing the locked timeframe
   useEffect(() => {
-    if (!autoOn || !plan || price == null) return
+    if (!autoOn || !onLockedTf || !plan || price == null) return
     const openN = positions.filter((p) => p.status === 'open' && p.symbol === symbol).length
-    // Coarse price bucket so live ticks don't thrash; re-run on side/conf/open changes
     const bucket = plan.atr > 0 ? Math.round(price / (plan.atr * 0.15)) : Math.round(price)
-    const key = `${symbol}|${plan.side}|${plan.planSide}|${Math.round(plan.confidence)}|${bucket}|${openN}`
+    const key = `${symbol}|${focusInterval}|${plan.side}|${plan.planSide}|${Math.round(plan.confidence)}|${bucket}|${openN}`
     if (key === lastAutoKey.current) return
     lastAutoKey.current = key
     runAutoForFocus(plan)
-  }, [autoOn, plan, price, symbol, runAutoForFocus, positions])
+  }, [
+    autoOn,
+    onLockedTf,
+    plan,
+    price,
+    symbol,
+    focusInterval,
+    runAutoForFocus,
+    positions,
+  ])
 
   const openForSymbol = positions.filter((p) => p.status === 'open' && p.symbol === symbol)
 
@@ -92,7 +103,13 @@ export function TradeDesk({
   return (
     <Panel
       title="Trade desk"
-      meta={autoOn ? 'auto pilot · paper' : 'plan · PnL'}
+      meta={
+        autoOn
+          ? onLockedTf
+            ? `auto · ${lockedInterval} · paper`
+            : `auto locked ${lockedInterval}`
+          : 'plan · PnL'
+      }
       className="trade-desk"
     >
       {!plan || price == null ? (
@@ -106,7 +123,9 @@ export function TradeDesk({
               <div className="row-flex">
                 <span className="bias-side">{plan.side.toUpperCase()}</span>
                 <span className="grow" />
-                <span className="muted">{plan.confidence.toFixed(0)}% conf</span>
+                <span className="muted">
+                  {focusInterval} · {plan.confidence.toFixed(0)}% conf
+                </span>
               </div>
               <div className="muted" style={{ marginTop: 6, fontSize: 10 }}>
                 MA stack {plan.maBias} · {plan.masBelow} below / {plan.masAbove} above · RSI{' '}
@@ -127,7 +146,7 @@ export function TradeDesk({
               <strong>Invalidation</strong> — {plan.invalidation}
             </div>
             <div className="filter-label" style={{ marginTop: 8 }}>
-              Suggested {plan.planSide}
+              Suggested {plan.planSide} · {focusInterval}
             </div>
             <div className="plan-grid">
               <div>
@@ -170,19 +189,27 @@ export function TradeDesk({
               type="button"
               className={cn('chip', 'auto-toggle', autoOn && 'active')}
               style={{ marginTop: 8, width: '100%' }}
-              onClick={() => toggleAuto(symbol)}
+              onClick={() => toggleAuto(symbol, focusInterval)}
               title={
                 autoOn
-                  ? 'Autopilot on — opens/closes paper positions from desk bias, stop & T1'
-                  : 'Enable paper autopilot for this symbol'
+                  ? `Autopilot on ${lockedInterval} — opens/closes from that TF plan only`
+                  : `Enable paper autopilot locked to current TF (${focusInterval})`
               }
             >
-              {autoOn ? '● Auto pilot ON' : '○ Auto pilot'}
+              {autoOn
+                ? `● Auto pilot ON · ${lockedInterval}`
+                : `○ Auto pilot · lock ${focusInterval}`}
             </button>
-            {autoOn && (
+            {autoOn && onLockedTf && (
               <span className="muted" style={{ fontSize: 9, display: 'block', marginTop: 4 }}>
-                Opens {plan.planSide} when conf ≥ {AUTO_MIN_CONFIDENCE}% · auto-exits stop / T1 /
-                bias flip · paper only
+                Using {lockedInterval} desk conditions · opens when conf ≥ {AUTO_MIN_CONFIDENCE}% ·
+                exits stop / T1 / bias flip · paper only
+              </span>
+            )}
+            {autoOn && !onLockedTf && (
+              <span className="auto-tf-warn">
+                Autopilot locked to <strong>{lockedInterval}</strong>. Viewing {focusInterval} —
+                switch chart to {lockedInterval} for auto opens/flips (stops still managed).
               </span>
             )}
 
@@ -197,6 +224,7 @@ export function TradeDesk({
                 disabled={plan.side === 'flat' && plan.confidence < 40}
                 onClick={() => {
                   const size = parseFloat(sizeDraft) || defaultSizeUsd
+                  const openReason = describePlanOpen(plan, focusInterval, 'manual')
                   openPosition({
                     symbol,
                     base,
@@ -207,6 +235,8 @@ export function TradeDesk({
                     target2: plan.target2,
                     sizeUsd: size,
                     note: plan.reasons[0] ?? plan.trigger,
+                    openReason,
+                    interval: focusInterval,
                     source: 'manual',
                   })
                 }}
@@ -222,7 +252,10 @@ export function TradeDesk({
 
             {(autoOn || autoPerf.closedCount > 0 || autoPerf.openCount > 0) && (
               <div className="auto-perf">
-                <div className="filter-label">Auto performance · {base}</div>
+                <div className="filter-label">
+                  Auto performance · {base}
+                  {lockedInterval ? ` · ${lockedInterval}` : ''}
+                </div>
                 <div className="auto-perf-grid">
                   <div>
                     <span className="muted">Total</span>
@@ -264,9 +297,9 @@ export function TradeDesk({
                     </span>
                   </div>
                 )}
-                {autoOn && autoPerf.closedCount === 0 && autoPerf.openCount === 0 && (
+                {autoOn && onLockedTf && autoPerf.closedCount === 0 && autoPerf.openCount === 0 && (
                   <div className="muted" style={{ fontSize: 9, marginTop: 4 }}>
-                    Watching market — will open when edge ≥ {AUTO_MIN_CONFIDENCE}% conf
+                    Watching {lockedInterval} — will open when edge ≥ {AUTO_MIN_CONFIDENCE}% conf
                   </div>
                 )}
               </div>
@@ -278,7 +311,9 @@ export function TradeDesk({
             {openForSymbol.length === 0 ? (
               <div className="muted" style={{ fontSize: 10 }}>
                 {autoOn
-                  ? `No open ${base} — autopilot scanning`
+                  ? onLockedTf
+                    ? `No open ${base} — scanning ${lockedInterval}`
+                    : `No open ${base} — auto on ${lockedInterval}`
                   : `No open ${base} position — paper track only`}
               </div>
             ) : (
@@ -294,6 +329,7 @@ export function TradeDesk({
                         {p.side}
                       </span>
                       {p.source === 'auto' && <span className="tag auto-tag">auto</span>}
+                      {p.interval && <span className="tag audit-tf-tag">{p.interval}</span>}
                       <span className="muted" style={{ fontSize: 10 }}>
                         ${p.sizeUsd.toFixed(0)}
                       </span>
@@ -308,6 +344,9 @@ export function TradeDesk({
                       entry {formatPrice(p.entry)} · stop {formatPrice(p.stop)} · T1{' '}
                       {formatPrice(p.target1)}
                     </div>
+                    {(p.openReason || p.note) && (
+                      <div className="position-reason">{p.openReason || p.note}</div>
+                    )}
                     <div className="row-flex" style={{ marginTop: 4 }}>
                       <span className={cn('num', r >= 0 ? 'up' : 'down')}>{r.toFixed(2)}R</span>
                       {stopHit && <span className="tag weakness">stop zone</span>}
@@ -362,117 +401,95 @@ export function TradeDesk({
 
             {auditEvents.length === 0 ? (
               <div className="muted" style={{ fontSize: 10, padding: '6px 0' }}>
-                No opens or closes yet — manual or auto trades will appear here with time, price,
-                and PnL.
+                No opens or closes yet — each event logs time, timeframe, reason, and PnL.
               </div>
             ) : (
-              <div className="audit-table-wrap">
-                <table className="audit-table">
-                  <thead>
-                    <tr>
-                      <th>When</th>
-                      <th>Event</th>
-                      <th>Side</th>
-                      {auditScope === 'all' && <th>Coin</th>}
-                      <th>Price</th>
-                      <th>Size</th>
-                      <th>PnL</th>
-                      <th>Held</th>
-                      <th>Via</th>
-                      <th>Detail</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {auditEvents.map((ev) => {
-                      const isOpen = ev.action === 'open'
-                      const pnl = ev.pnlUsd
-                      const hasPnl = pnl != null && Number.isFinite(pnl)
-                      return (
-                        <tr
-                          key={ev.id}
-                          className={cn(
-                            'audit-row',
-                            isOpen ? 'audit-row--open' : 'audit-row--close',
-                          )}
+              <div className="audit-list">
+                {auditEvents.map((ev) => {
+                  const isOpen = ev.action === 'open'
+                  const pnl = ev.pnlUsd
+                  const hasPnl = pnl != null && Number.isFinite(pnl)
+                  return (
+                    <article
+                      key={ev.id}
+                      className={cn(
+                        'audit-card',
+                        isOpen ? 'audit-card--open' : 'audit-card--close',
+                      )}
+                    >
+                      <div className="audit-card__top">
+                        <span
+                          className={cn('tag', isOpen ? 'audit-tag-open' : 'audit-tag-close')}
                         >
-                          <td className="audit-time num">{formatAuditTime(ev.at)}</td>
-                          <td>
-                            <span
-                              className={cn(
-                                'tag',
-                                isOpen ? 'audit-tag-open' : 'audit-tag-close',
-                              )}
-                            >
-                              {isOpen ? 'OPEN' : 'CLOSE'}
-                            </span>
-                          </td>
-                          <td>
-                            <span
-                              className={cn(
-                                'tag',
-                                ev.side === 'long' ? 'strength' : 'weakness',
-                              )}
-                            >
-                              {ev.side}
-                            </span>
-                          </td>
-                          {auditScope === 'all' && (
-                            <td className="muted">{ev.base}</td>
+                          {isOpen ? 'OPEN' : 'CLOSE'}
+                        </span>
+                        <span
+                          className={cn('tag', ev.side === 'long' ? 'strength' : 'weakness')}
+                        >
+                          {ev.side}
+                        </span>
+                        {ev.interval && (
+                          <span className="tag audit-tf-tag" title="Plan timeframe">
+                            {ev.interval}
+                          </span>
+                        )}
+                        {ev.source === 'auto' ? (
+                          <span className="tag auto-tag">auto</span>
+                        ) : (
+                          <span className="tag audit-manual-tag">manual</span>
+                        )}
+                        {auditScope === 'all' && (
+                          <span className="tag audit-coin-tag">{ev.base}</span>
+                        )}
+                        <span className="grow" />
+                        <time className="audit-time num" dateTime={new Date(ev.at).toISOString()}>
+                          {formatAuditTime(ev.at)}
+                        </time>
+                      </div>
+
+                      <div className="audit-card__meta">
+                        <span>
+                          <span className="muted">Price </span>
+                          <span className="num">{formatPrice(ev.price)}</span>
+                          {!isOpen && (
+                            <span className="muted"> from {formatPrice(ev.entry)}</span>
                           )}
-                          <td className="num">
-                            {formatPrice(ev.price)}
-                            {!isOpen && (
-                              <span className="muted" style={{ fontSize: 9, display: 'block' }}>
-                                from {formatPrice(ev.entry)}
-                              </span>
-                            )}
-                          </td>
-                          <td className="num muted">${ev.sizeUsd.toFixed(0)}</td>
-                          <td className="num">
-                            {hasPnl ? (
-                              <span className={cn(pnl! >= 0 ? 'up' : 'down')}>
-                                {pnl! >= 0 ? '+' : ''}
-                                {pnl!.toFixed(2)}
-                                {ev.pnlPct != null && (
-                                  <span className="muted" style={{ fontSize: 9, marginLeft: 4 }}>
-                                    ({ev.pnlPct >= 0 ? '+' : ''}
-                                    {ev.pnlPct.toFixed(2)}%)
-                                  </span>
-                                )}
-                                {isOpen && (
-                                  <span className="muted" style={{ fontSize: 9, display: 'block' }}>
-                                    unrealized
-                                  </span>
-                                )}
-                              </span>
-                            ) : (
-                              <span className="muted">—</span>
-                            )}
-                          </td>
-                          <td className="num muted">
-                            {isOpen
-                              ? formatHeld(Date.now() - ev.at)
-                              : formatHeld(ev.heldMs)}
-                          </td>
-                          <td>
-                            {ev.source === 'auto' ? (
-                              <span className="tag auto-tag">auto</span>
-                            ) : (
-                              <span className="muted" style={{ fontSize: 10 }}>
-                                manual
-                              </span>
-                            )}
-                          </td>
-                          <td className="audit-detail muted">
-                            {isOpen
-                              ? ev.note || '—'
-                              : `${closeReasonLabel(ev.closeReason)}${ev.note ? ` · ${ev.note}` : ''}`}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+                        </span>
+                        <span>
+                          <span className="muted">Size </span>
+                          <span className="num">${ev.sizeUsd.toFixed(0)}</span>
+                        </span>
+                        <span>
+                          <span className="muted">Held </span>
+                          <span className="num">
+                            {isOpen ? formatHeld(Date.now() - ev.at) : formatHeld(ev.heldMs)}
+                          </span>
+                        </span>
+                        <span>
+                          <span className="muted">PnL </span>
+                          {hasPnl ? (
+                            <span className={cn('num', pnl! >= 0 ? 'up' : 'down')}>
+                              {pnl! >= 0 ? '+' : ''}
+                              {pnl!.toFixed(2)}
+                              {ev.pnlPct != null && (
+                                <>
+                                  {' '}
+                                  ({ev.pnlPct >= 0 ? '+' : ''}
+                                  {ev.pnlPct.toFixed(2)}%)
+                                </>
+                              )}
+                              {isOpen && <span className="muted"> unrealized</span>}
+                            </span>
+                          ) : (
+                            <span className="muted">—</span>
+                          )}
+                        </span>
+                      </div>
+
+                      <p className="audit-card__reason">{formatOpenReason(ev)}</p>
+                    </article>
+                  )
+                })}
               </div>
             )}
           </div>

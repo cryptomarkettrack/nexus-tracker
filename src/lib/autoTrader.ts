@@ -1,4 +1,4 @@
-import type { Candle, Position, TradePlan } from './types'
+import type { AutoBinding, Candle, Interval, Position, TradePlan } from './types'
 import { positionPnl } from './tradePlan'
 
 export type CloseReason = NonNullable<Position['closeReason']>
@@ -38,8 +38,32 @@ export interface AutoPerf {
   awayClosedCount: number
 }
 
-export function isAutoEnabled(autoSymbols: string[], symbol: string): boolean {
-  return autoSymbols.includes(symbol)
+export function isAutoEnabled(
+  autoBindings: AutoBinding[] | string[],
+  symbol: string,
+): boolean {
+  if (!autoBindings.length) return false
+  if (typeof autoBindings[0] === 'string') {
+    return (autoBindings as string[]).includes(symbol)
+  }
+  return (autoBindings as AutoBinding[]).some((b) => b.symbol === symbol)
+}
+
+export function getAutoInterval(
+  autoBindings: AutoBinding[],
+  symbol: string,
+): Interval | null {
+  return autoBindings.find((b) => b.symbol === symbol)?.interval ?? null
+}
+
+/** Autopilot only acts on the timeframe locked when the user enabled it */
+export function isAutoActiveOnInterval(
+  autoBindings: AutoBinding[],
+  symbol: string,
+  interval: Interval,
+): boolean {
+  const locked = getAutoInterval(autoBindings, symbol)
+  return locked != null && locked === interval
 }
 
 export function hasOpenPosition(positions: Position[], symbol: string): boolean {
@@ -162,16 +186,19 @@ export function backfillAutoTrades(input: {
   base: string
   candles: Candle[]
   sizeUsd: number
+  interval: Interval
   /** Do not invent trades that overlap existing auto history */
   existing: Position[]
   limit?: number
 }): Position[] {
-  const { symbol, base, candles, sizeUsd, existing } = input
+  const { symbol, base, candles, sizeUsd, interval, existing } = input
   const limit = input.limit ?? AUTO_BACKFILL_LIMIT
   if (candles.length < 30) return []
 
-  const existingAuto = existing.filter((p) => p.symbol === symbol && p.source === 'auto')
-  // Only backfill if we have almost no auto history for this symbol
+  const existingAuto = existing.filter(
+    (p) => p.symbol === symbol && p.source === 'auto' && (p.interval == null || p.interval === interval),
+  )
+  // Only backfill if we have almost no auto history for this symbol+TF
   if (existingAuto.length >= 3) return []
 
   const closes = candles.map((c) => c.close)
@@ -239,8 +266,11 @@ export function backfillAutoTrades(input: {
     const target1 = side === 'long' ? entry + atr : entry - atr
     const target2 = side === 'long' ? entry + atr * 2 : entry - atr * 2
 
+    const openReason =
+      `Backfill ${side.toUpperCase()} on ${interval} · RSI ${rsi.toFixed(0)} · ` +
+      `price vs SMA20 / momentum heuristic on historical ${interval} bars`
     open = {
-      id: `auto-bf-${symbol}-${c.time}`,
+      id: `auto-bf-${symbol}-${interval}-${c.time}`,
       symbol,
       base,
       side,
@@ -250,7 +280,9 @@ export function backfillAutoTrades(input: {
       target2,
       sizeUsd,
       openedAt: c.time,
-      note: `Backfill ${side} · RSI ${rsi.toFixed(0)}`,
+      note: openReason,
+      openReason,
+      interval,
       status: 'open',
       source: 'auto',
     }

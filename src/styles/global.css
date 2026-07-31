@@ -690,66 +690,65 @@ button:disabled {
   gap: 8px;
   margin-bottom: 6px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
-.audit-table-wrap {
-  overflow-x: auto;
-  max-height: min(200px, 22vh);
+.audit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(280px, 32vh);
   overflow-y: auto;
+  padding-right: 2px;
+}
+
+.audit-card {
+  padding: 10px;
   border: 1px solid var(--line);
   background: var(--bg-1);
+  min-width: 0;
 }
 
-.audit-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 10px;
-  white-space: nowrap;
+.audit-card--open {
+  border-left: 2px solid rgba(143, 186, 107, 0.55);
+  background: linear-gradient(90deg, rgba(143, 186, 107, 0.06), transparent 40%), var(--bg-1);
 }
 
-.audit-table th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  text-align: left;
-  padding: 6px 8px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+.audit-card--close {
+  border-left: 2px solid rgba(180, 180, 200, 0.35);
+}
+
+.audit-card__top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.audit-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  font-size: 11px;
+  margin-bottom: 8px;
+  line-height: 1.35;
+}
+
+.audit-card__reason {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
   color: var(--text-2);
-  background: var(--bg-2);
-  border-bottom: 1px solid var(--line);
-}
-
-.audit-table td {
-  padding: 5px 8px;
-  border-bottom: 1px solid var(--line);
-  vertical-align: top;
-}
-
-.audit-table tr:last-child td {
-  border-bottom: none;
-}
-
-.audit-row--open {
-  background: rgba(143, 186, 107, 0.04);
-}
-
-.audit-row--close {
-  background: transparent;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .audit-time {
   font-size: 10px;
   color: var(--text-2);
-}
-
-.audit-detail {
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 9px;
 }
 
 .tag.audit-tag-open {
@@ -766,6 +765,50 @@ button:disabled {
   background: rgba(255, 255, 255, 0.04);
   font-size: 9px;
   letter-spacing: 0.06em;
+}
+
+.tag.audit-tf-tag {
+  border-color: rgba(100, 160, 220, 0.45);
+  color: #8ec5f0;
+  background: rgba(100, 160, 220, 0.12);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+.tag.audit-manual-tag {
+  font-size: 9px;
+  color: var(--text-2);
+  border-color: var(--line);
+  background: transparent;
+}
+
+.tag.audit-coin-tag {
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
+.auto-tf-warn {
+  display: block;
+  margin-top: 6px;
+  padding: 6px 8px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--amber);
+  border: 1px solid rgba(232, 185, 74, 0.35);
+  background: rgba(232, 185, 74, 0.08);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.position-reason {
+  margin-top: 6px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-2);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .trade-desk-col--bias .driver-list {

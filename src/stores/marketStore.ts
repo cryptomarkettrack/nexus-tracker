@@ -5,6 +5,7 @@ import {
   decideCandleExit,
   decideFlipExit,
   decideLiveExit,
+  isAutoActiveOnInterval,
   isAutoEnabled,
 } from '../lib/autoTrader'
 import {
@@ -27,9 +28,11 @@ import {
 } from '../lib/indicators'
 import { SECTOR_ORDER, SECTORS } from '../lib/sectors'
 import { computeNearbyMaLevels, MA_KLINE_LIMIT, MA_TIMEFRAMES } from '../lib/ma'
+import { describePlanOpen } from '../lib/tradePlan'
 import { detectTrendlines, nearestChartLevels } from '../lib/trendlines'
 import { buildWatchZones, collectZoneSources } from '../lib/zones'
 import type {
+  AutoBinding,
   Candle,
   CoinMetrics,
   FundingInfo,
@@ -51,9 +54,17 @@ import type {
 } from '../lib/types'
 
 const POSITIONS_KEY = 'nexus-positions-v1'
+const AUTO_BINDINGS_KEY = 'nexus-auto-bindings-v1'
+/** Legacy key (symbol list only) — migrated once */
 const AUTO_SYMBOLS_KEY = 'nexus-auto-symbols-v1'
 const AUTO_AWAY_KEY = 'nexus-auto-away-v1'
 const LAST_SEEN_KEY = 'nexus-last-seen-v1'
+
+const INTERVALS: Interval[] = ['1m', '5m', '15m', '1h', '4h', '1d', '1w']
+
+function isInterval(v: unknown): v is Interval {
+  return typeof v === 'string' && (INTERVALS as string[]).includes(v)
+}
 
 function loadPositions(): Position[] {
   try {
@@ -78,20 +89,43 @@ function savePositions(positions: Position[]) {
   }
 }
 
-function loadAutoSymbols(): string[] {
+function loadAutoBindings(): AutoBinding[] {
   try {
-    const raw = localStorage.getItem(AUTO_SYMBOLS_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as string[]
-    return Array.isArray(parsed) ? parsed.filter((s) => typeof s === 'string') : []
+    const raw = localStorage.getItem(AUTO_BINDINGS_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as unknown
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map((b) => {
+            if (!b || typeof b !== 'object') return null
+            const o = b as { symbol?: unknown; interval?: unknown }
+            if (typeof o.symbol !== 'string' || !isInterval(o.interval)) return null
+            return { symbol: o.symbol, interval: o.interval } satisfies AutoBinding
+          })
+          .filter((b): b is AutoBinding => b != null)
+      }
+    }
+    // migrate legacy symbol-only list → default 1d lock
+    const legacy = localStorage.getItem(AUTO_SYMBOLS_KEY)
+    if (legacy) {
+      const parsed = JSON.parse(legacy) as unknown
+      if (Array.isArray(parsed)) {
+        const migrated = parsed
+          .filter((s): s is string => typeof s === 'string')
+          .map((symbol) => ({ symbol, interval: '1d' as Interval }))
+        saveAutoBindings(migrated)
+        return migrated
+      }
+    }
+    return []
   } catch {
     return []
   }
 }
 
-function saveAutoSymbols(symbols: string[]) {
+function saveAutoBindings(bindings: AutoBinding[]) {
   try {
-    localStorage.setItem(AUTO_SYMBOLS_KEY, JSON.stringify(symbols))
+    localStorage.setItem(AUTO_BINDINGS_KEY, JSON.stringify(bindings))
   } catch {
     /* ignore */
   }
@@ -163,14 +197,18 @@ interface MarketState {
   watchLevels: WatchLevel[]
   positions: Position[]
   defaultSizeUsd: number
-  /** Symbols with paper autopilot enabled */
-  autoSymbols: string[]
+  /** Autopilot bindings: symbol → locked timeframe (set when user enables auto) */
+  autoBindings: AutoBinding[]
   /** Session marker: closed trades after this count as “while away” */
   autoAwaySince: number
   scannerFilter: 'all' | 'breakout' | 'volume-spike' | 'strength' | 'mean-reversion' | 'squeeze'
   setScannerFilter: (f: MarketState['scannerFilter']) => void
   setDefaultSizeUsd: (n: number) => void
-  toggleAuto: (symbol: string) => void
+  /**
+   * Toggle autopilot for symbol. When enabling, locks `interval` (current chart TF).
+   * Autopilot only opens/flips using plans from that timeframe.
+   */
+  toggleAuto: (symbol: string, interval: Interval) => void
   openPosition: (
     p: Omit<Position, 'id' | 'openedAt' | 'status'> & { source?: 'manual' | 'auto' },
   ) => void
@@ -288,26 +326,34 @@ export const useMarketStore = create<MarketState>((set, get) => ({
   watchLevels: [],
   positions: loadPositions(),
   defaultSizeUsd: 1000,
-  autoSymbols: loadAutoSymbols(),
+  autoBindings: loadAutoBindings(),
   autoAwaySince: loadAwayMarker(),
   scannerFilter: 'all',
   setScannerFilter: (f) => set({ scannerFilter: f }),
   setDefaultSizeUsd: (n) => set({ defaultSizeUsd: Math.max(10, n) }),
-  toggleAuto: (symbol) => {
-    const cur = get().autoSymbols
-    const on = cur.includes(symbol)
-    const autoSymbols = on ? cur.filter((s) => s !== symbol) : [...cur, symbol]
-    saveAutoSymbols(autoSymbols)
-    set({ autoSymbols })
-    if (!on) {
-      // Enabling: catch up performance history + start managing this symbol
-      void get().refreshFocus()
+  toggleAuto: (symbol, interval) => {
+    const cur = get().autoBindings
+    const existing = cur.find((b) => b.symbol === symbol)
+    const autoBindings = existing
+      ? cur.filter((b) => b.symbol !== symbol)
+      : [...cur.filter((b) => b.symbol !== symbol), { symbol, interval }]
+    saveAutoBindings(autoBindings)
+    set({ autoBindings })
+    if (!existing) {
+      // Enabling on this TF: refresh so plan matches locked interval
+      if (get().focusInterval !== interval) {
+        get().setFocusInterval(interval)
+      } else {
+        void get().refreshFocus()
+      }
     }
   },
   openPosition: (p) => {
     const pos: Position = {
       ...p,
       source: p.source ?? 'manual',
+      interval: p.interval ?? get().focusInterval,
+      openReason: p.openReason ?? p.note,
       id: `${p.source === 'auto' ? 'auto-' : ''}${p.symbol}-${Date.now()}`,
       openedAt: Date.now(),
       status: 'open',
@@ -362,20 +408,26 @@ export const useMarketStore = create<MarketState>((set, get) => ({
   runAutoForFocus: (plan) => {
     const {
       focusSymbol,
-      autoSymbols,
+      focusInterval,
+      autoBindings,
       positions,
       livePrice,
       tickers,
       defaultSizeUsd,
       candles,
     } = get()
-    if (!isAutoEnabled(autoSymbols, focusSymbol)) return
+    if (!isAutoEnabled(autoBindings, focusSymbol)) return
+
+    // Plan-driven opens/flips only on the timeframe locked when auto was enabled
+    const onLockedTf = isAutoActiveOnInterval(autoBindings, focusSymbol, focusInterval)
+    const lockedInterval =
+      autoBindings.find((b) => b.symbol === focusSymbol)?.interval ?? focusInterval
 
     const mark =
       livePrice ?? tickers.get(focusSymbol)?.lastPrice ?? plan?.entry ?? 0
     if (!mark || mark <= 0) return
 
-    // 1) Reconcile open positions against candles (hits while app was closed)
+    // 1) Reconcile + price exits always; bias flip only on locked TF plan
     const openHere = positions.filter(
       (p) => p.status === 'open' && p.symbol === focusSymbol,
     )
@@ -393,22 +445,29 @@ export const useMarketStore = create<MarketState>((set, get) => ({
         get().closePosition(p.id, live.price, live.reason)
         continue
       }
-      if (p.source === 'auto' && plan) {
-        const flip = decideFlipExit(p, plan)
-        if (flip?.exit) {
-          get().closePosition(p.id, mark, 'flip')
+      if (onLockedTf && p.source === 'auto' && plan) {
+        // Only flip using the locked timeframe's plan
+        if (!p.interval || p.interval === focusInterval) {
+          const flip = decideFlipExit(p, plan)
+          if (flip?.exit) {
+            get().closePosition(p.id, mark, 'flip')
+          }
         }
       }
     }
 
-    // 2) One-shot historical backfill so returning to a coin shows prior paper performance
-    if (!backfilledSymbols.has(focusSymbol) && candles.length >= 40) {
-      backfilledSymbols.add(focusSymbol)
+    if (!onLockedTf) return
+
+    // 2) One-shot historical backfill for this symbol+TF
+    const bfKey = `${focusSymbol}:${focusInterval}`
+    if (!backfilledSymbols.has(bfKey) && candles.length >= 40) {
+      backfilledSymbols.add(bfKey)
       const filled = backfillAutoTrades({
         symbol: focusSymbol,
         base: focusSymbol.replace('USDT', ''),
         candles,
         sizeUsd: defaultSizeUsd,
+        interval: focusInterval,
         existing: get().positions,
       })
       if (filled.length) {
@@ -418,9 +477,10 @@ export const useMarketStore = create<MarketState>((set, get) => ({
       }
     }
 
-    // 3) Open new auto position from plan
+    // 3) Open new auto position from plan on locked TF
     const decision = decideAutoOpen(plan, get().positions)
     if (decision.open && decision.side && plan) {
+      const openReason = describePlanOpen(plan, lockedInterval, 'auto')
       get().openPosition({
         symbol: focusSymbol,
         base: plan.base,
@@ -430,7 +490,9 @@ export const useMarketStore = create<MarketState>((set, get) => ({
         target1: plan.target1,
         target2: plan.target2,
         sizeUsd: defaultSizeUsd,
-        note: `Auto · ${decision.reason ?? plan.trigger}`,
+        note: plan.reasons[0] ?? plan.trigger,
+        openReason,
+        interval: lockedInterval,
         source: 'auto',
       })
     }

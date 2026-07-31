@@ -237,3 +237,17 @@ export function rMultiple(
   const move = side === 'long' ? mark - entry : entry - mark
   return move / risk
 }
+
+/** Full narrative for audit log / auto open */
+export function describePlanOpen(
+  plan: TradePlan,
+  interval: string,
+  source: 'manual' | 'auto' = 'auto',
+): string {
+  const drivers = plan.reasons.length ? plan.reasons.join('; ') : 'no listed drivers'
+  const prefix = source === 'auto' ? 'Auto' : 'Manual'
+  return (
+    `${prefix} ${plan.planSide.toUpperCase()} on ${interval} · ${plan.confidence.toFixed(0)}% conf · ` +
+    `${drivers}. Trigger: ${plan.trigger}. Invalidation: ${plan.invalidation}`
+  )
+}

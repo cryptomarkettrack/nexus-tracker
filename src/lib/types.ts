@@ -150,6 +150,16 @@ export interface Position {
   /** manual chip vs autopilot */
   source?: 'manual' | 'auto'
   closeReason?: 'stop' | 'target1' | 'target2' | 'flip' | 'manual' | 'reconcile'
+  /** Chart timeframe the plan/auto decision used */
+  interval?: Interval
+  /** Human-readable why this position opened (bias drivers, trigger, conf) */
+  openReason?: string
+}
+
+/** Per-symbol paper autopilot lock (timeframe captured when user enables auto) */
+export interface AutoBinding {
+  symbol: string
+  interval: Interval
 }
 
 export interface VolumeProfileBin {

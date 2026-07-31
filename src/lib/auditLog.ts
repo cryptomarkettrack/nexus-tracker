@@ -1,4 +1,4 @@
-import type { Position } from './types'
+import type { Interval, Position } from './types'
 import { positionPnl } from './tradePlan'
 
 export type AuditAction = 'open' | 'close'
@@ -17,6 +17,9 @@ export interface AuditEvent {
   entry: number
   sizeUsd: number
   note?: string
+  /** Full open rationale (drivers + trigger) */
+  openReason?: string
+  interval?: Interval
   closeReason?: Position['closeReason']
   /** Realized (close) or unrealized (open, if mark provided) */
   pnlUsd?: number
@@ -41,6 +44,7 @@ export function buildAuditLog(
 
   for (const p of list) {
     const source = p.source ?? 'manual'
+    const openReason = p.openReason || p.note || undefined
 
     events.push({
       id: `${p.id}-open`,
@@ -55,6 +59,8 @@ export function buildAuditLog(
       entry: p.entry,
       sizeUsd: p.sizeUsd,
       note: p.note,
+      openReason,
+      interval: p.interval,
       status: p.status,
     })
 
@@ -73,6 +79,8 @@ export function buildAuditLog(
         entry: p.entry,
         sizeUsd: p.sizeUsd,
         note: p.note,
+        openReason,
+        interval: p.interval,
         closeReason: p.closeReason,
         pnlUsd: p.realizedPnlUsd ?? pnlUsd,
         pnlPct,
@@ -83,7 +91,6 @@ export function buildAuditLog(
       const mark = getMark(opts.markBySymbol, p.symbol)
       if (mark != null && mark > 0) {
         const { pnlUsd, pnlPct } = positionPnl(p.side, p.entry, mark, p.sizeUsd)
-        // Attach live unrealized to the open event for display convenience
         const openEv = events[events.length - 1]!
         openEv.pnlUsd = pnlUsd
         openEv.pnlPct = pnlPct
@@ -144,4 +151,15 @@ export function closeReasonLabel(reason: Position['closeReason'] | undefined): s
     default:
       return 'exit'
   }
+}
+
+/** Readable open description for audit / position cards */
+export function formatOpenReason(ev: Pick<AuditEvent, 'action' | 'openReason' | 'note' | 'closeReason'>): string {
+  if (ev.action === 'open') {
+    return ev.openReason || ev.note || 'No reason recorded'
+  }
+  const exit = closeReasonLabel(ev.closeReason)
+  if (ev.openReason) return `Exit: ${exit}. Opened because: ${ev.openReason}`
+  if (ev.note) return `Exit: ${exit}. ${ev.note}`
+  return `Exit: ${exit}`
 }
