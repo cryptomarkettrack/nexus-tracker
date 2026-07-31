@@ -36,7 +36,7 @@ export function RadarMode() {
 
   return (
     <div className="mode-view">
-      <div className="grid-radar" style={{ minHeight: 'calc(100vh - 90px)' }}>
+      <div className="grid-radar">
         <Panel
           title="Return heatmap"
           meta="top 72 by quote volume · 24h %"
@@ -105,60 +105,64 @@ export function RadarMode() {
         </Panel>
 
         <Panel title="Relative strength vs BTC" meta="alpha surface">
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+          <div className="split-2">
             <div>
               <div className="filter-label">Outperformers</div>
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Coin</th>
-                    <th className="num">RS</th>
-                    <th className="num">24h</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rsLeaders.map((m) => (
-                    <tr key={m.symbol} onClick={() => setFocusSymbol(m.symbol)}>
-                      <td>
-                        <strong>{m.base}</strong>
-                      </td>
-                      <td className="num">
-                        <Pct value={m.relStrengthBtc} />
-                      </td>
-                      <td className="num muted">
-                        <Pct value={m.change24h} />
-                      </td>
+              <div className="table-scroll">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Coin</th>
+                      <th className="num">RS</th>
+                      <th className="num">24h</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {rsLeaders.map((m) => (
+                      <tr key={m.symbol} onClick={() => setFocusSymbol(m.symbol)}>
+                        <td>
+                          <strong>{m.base}</strong>
+                        </td>
+                        <td className="num">
+                          <Pct value={m.relStrengthBtc} />
+                        </td>
+                        <td className="num muted">
+                          <Pct value={m.change24h} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
             <div>
               <div className="filter-label">Underperformers</div>
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Coin</th>
-                    <th className="num">RS</th>
-                    <th className="num">24h</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rsLaggards.map((m) => (
-                    <tr key={m.symbol} onClick={() => setFocusSymbol(m.symbol)}>
-                      <td>
-                        <strong>{m.base}</strong>
-                      </td>
-                      <td className="num">
-                        <Pct value={m.relStrengthBtc} />
-                      </td>
-                      <td className="num muted">
-                        <Pct value={m.change24h} />
-                      </td>
+              <div className="table-scroll">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Coin</th>
+                      <th className="num">RS</th>
+                      <th className="num">24h</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {rsLaggards.map((m) => (
+                      <tr key={m.symbol} onClick={() => setFocusSymbol(m.symbol)}>
+                        <td>
+                          <strong>{m.base}</strong>
+                        </td>
+                        <td className="num">
+                          <Pct value={m.relStrengthBtc} />
+                        </td>
+                        <td className="num muted">
+                          <Pct value={m.change24h} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </Panel>

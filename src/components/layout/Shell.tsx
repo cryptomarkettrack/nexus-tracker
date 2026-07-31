@@ -24,6 +24,15 @@ export function Shell({ children }: { children: ReactNode }) {
   const eth = tickerList.find((t) => t.symbol === 'ETHUSDT')
   const totalVol = tickerList.slice(0, 100).reduce((a, t) => a + t.quoteVolume, 0)
 
+  const liveLabel =
+    connection === 'live'
+      ? 'Live'
+      : connection === 'connecting'
+        ? 'Sync…'
+        : connection === 'error'
+          ? 'Error'
+          : connection
+
   return (
     <div className="app-shell">
       <header className="header">
@@ -40,7 +49,7 @@ export function Shell({ children }: { children: ReactNode }) {
             <div className="stat-label">BTC</div>
             <div className={cn('stat-value', (btc?.priceChangePercent ?? 0) >= 0 ? 'up' : 'down')}>
               {btc ? formatPrice(btc.lastPrice) : '—'}{' '}
-              <span style={{ fontSize: 11 }}>
+              <span className="stat-chg">
                 {btc ? `${btc.priceChangePercent >= 0 ? '+' : ''}${btc.priceChangePercent.toFixed(2)}%` : ''}
               </span>
             </div>
@@ -49,22 +58,22 @@ export function Shell({ children }: { children: ReactNode }) {
             <div className="stat-label">ETH</div>
             <div className={cn('stat-value', (eth?.priceChangePercent ?? 0) >= 0 ? 'up' : 'down')}>
               {eth ? formatPrice(eth.lastPrice) : '—'}{' '}
-              <span style={{ fontSize: 11 }}>
+              <span className="stat-chg">
                 {eth ? `${eth.priceChangePercent >= 0 ? '+' : ''}${eth.priceChangePercent.toFixed(2)}%` : ''}
               </span>
             </div>
           </div>
-          <div className="stat-pill">
+          <div className="stat-pill stat-pill--secondary">
             <div className="stat-label">Breadth</div>
             <div className={cn('stat-value', (breadth?.advancePct ?? 50) >= 50 ? 'up' : 'down')}>
               {breadth ? `${breadth.advancePct.toFixed(0)}% adv` : '—'}
             </div>
           </div>
-          <div className="stat-pill">
+          <div className="stat-pill stat-pill--secondary">
             <div className="stat-label">Top-100 vol</div>
             <div className="stat-value amber">{formatCompact(totalVol)}</div>
           </div>
-          <div className="stat-pill">
+          <div className="stat-pill stat-pill--secondary">
             <div className="stat-label">Regime</div>
             <div
               className={cn(
@@ -82,35 +91,33 @@ export function Shell({ children }: { children: ReactNode }) {
         </div>
 
         <div className="header-right">
-          <div className={cn('live-dot', connection)}>
+          <div className={cn('live-dot', connection)} title={connection}>
             <i />
-            {connection === 'live'
-              ? 'Live WS'
-              : connection === 'connecting'
-                ? 'Connecting'
-                : connection === 'error'
-                  ? 'Error'
-                  : connection}
+            <span className="live-dot__label">{liveLabel}</span>
           </div>
-          <div className="stat-pill">
+          <div className="stat-pill stat-pill--sync">
             <div className="stat-label">Sync</div>
-            <div className="stat-value muted" style={{ fontSize: 11 }}>
+            <div className="stat-value muted stat-value--sync">
               {lastRefresh ? new Date(lastRefresh).toLocaleTimeString() : '—'}
             </div>
           </div>
         </div>
       </header>
 
-      <nav className="rail">
+      <nav className="rail" aria-label="Primary">
         {MODES.map((m) => (
           <button
             key={m.id}
+            type="button"
             className={cn('rail-btn', mode === m.id && 'active')}
             onClick={() => setMode(m.id)}
             title={m.id}
+            aria-current={mode === m.id ? 'page' : undefined}
           >
-            <span style={{ fontSize: 16, lineHeight: 1 }}>{m.icon}</span>
-            <span>{m.label}</span>
+            <span className="rail-btn__icon" aria-hidden>
+              {m.icon}
+            </span>
+            <span className="rail-btn__label">{m.label}</span>
           </button>
         ))}
       </nav>

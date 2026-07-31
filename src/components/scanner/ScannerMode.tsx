@@ -57,36 +57,35 @@ export function ScannerMode() {
 
   return (
     <div className="mode-view">
-      <div className="grid-scanner" style={{ minHeight: 'calc(100vh - 90px)' }}>
-        <Panel title="Lens" meta="filters">
+      <div className="grid-scanner">
+        <Panel title="Lens" meta="filters" className="scanner-lens">
           <div className="filters">
             <input
               className="search-input"
               placeholder="Filter symbol…"
               value={q}
               onChange={(e) => setQ(e.target.value)}
+              enterKeyHint="search"
             />
             <div>
               <div className="filter-label">Setup type</div>
-              <div className="chip-row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+              <div className="chip-row scanner-filter-chips">
                 {FILTERS.map((f) => (
                   <button
                     key={f.id}
-                    className={cn('chip', scannerFilter === f.id && 'active')}
-                    style={{ textAlign: 'left' }}
+                    type="button"
+                    className={cn('chip scanner-filter-chip', scannerFilter === f.id && 'active')}
                     onClick={() => setScannerFilter(f.id)}
                   >
-                    <div>{f.label}</div>
-                    <div className="muted" style={{ fontSize: 9, marginTop: 2 }}>
-                      {f.hint}
-                    </div>
+                    <span className="scanner-filter-chip__label">{f.label}</span>
+                    <span className="scanner-filter-chip__hint muted">{f.hint}</span>
                   </button>
                 ))}
               </div>
             </div>
             <div>
               <div className="filter-label">Sort</div>
-              <div className="chip-row">
+              <div className="chip-row chip-row--scroll">
                 {(
                   [
                     ['score', 'Score'],
@@ -98,6 +97,7 @@ export function ScannerMode() {
                 ).map(([id, label]) => (
                   <button
                     key={id}
+                    type="button"
                     className={cn('chip', sort === id && 'active')}
                     onClick={() => setSort(id)}
                   >
@@ -106,11 +106,11 @@ export function ScannerMode() {
                 ))}
               </div>
             </div>
-            <div className="insight" style={{ marginTop: 8 }}>
+            <div className="insight scanner-help">
               <strong>How to read this</strong>
               <br />
               Scanner ranks liquid USDT pairs by confluence of volume anomaly, relative strength
-              vs BTC, RSI posture, and range position. Click a row to open FOCUS with S/R and
+              vs BTC, RSI posture, and range position. Tap a row to open FOCUS with S/R and
               volume profile.
             </div>
           </div>
@@ -120,7 +120,7 @@ export function ScannerMode() {
           title="Opportunity matrix"
           meta={`${rows.length} names`}
           bodyClassName="scroll-y"
-          className="grow"
+          className="grow scanner-matrix"
         >
           {topInsight && (
             <div className="insight">
@@ -132,70 +132,116 @@ export function ScannerMode() {
           {rows.length === 0 ? (
             <div className="empty-state">No matches — wait for candle enrichment or clear filters</div>
           ) : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Coin</th>
-                  <th>Setup</th>
-                  <th className="num">Score</th>
-                  <th className="num">Price</th>
-                  <th className="num">24h</th>
-                  <th className="num">vs BTC</th>
-                  <th className="num">Vol×</th>
-                  <th className="num">RSI</th>
-                  <th className="num">Range</th>
-                  <th className="num">ATR%</th>
-                  <th className="num">Quote vol</th>
-                  <th>Thesis</th>
-                </tr>
-              </thead>
-              <tbody>
+            <>
+              <div className="scanner-cards" aria-label="Opportunity cards">
                 {rows.map((m) => (
-                  <tr
+                  <button
                     key={m.symbol}
-                    className={cn(focusSymbol === m.symbol && 'active')}
+                    type="button"
+                    className={cn('scanner-card', focusSymbol === m.symbol && 'active')}
                     onClick={() => setFocusSymbol(m.symbol)}
                   >
-                    <td>
-                      <strong style={{ fontFamily: 'var(--font-ui)' }}>{m.base}</strong>
-                    </td>
-                    <td>
+                    <div className="scanner-card__top">
+                      <strong className="scanner-card__base">{m.base}</strong>
                       <span className={`tag ${m.setup}`}>{m.setup}</span>
-                    </td>
-                    <td className="num amber">{m.setupScore.toFixed(0)}</td>
-                    <td className="num">{formatPrice(m.price)}</td>
-                    <td className="num">
+                      <span className="num amber scanner-card__score">{m.setupScore.toFixed(0)}</span>
+                    </div>
+                    <div className="scanner-card__metrics">
+                      <span className="num">{formatPrice(m.price)}</span>
                       <Pct value={m.change24h} />
-                    </td>
-                    <td className="num">
+                      <span className="muted">vs BTC</span>
                       <Pct value={m.relStrengthBtc} />
-                    </td>
-                    <td className="num">{m.volumeAnomaly.toFixed(2)}</td>
-                    <td
-                      className={cn(
-                        'num',
-                        m.rsi > 70 ? 'down' : m.rsi < 30 ? 'up' : 'muted',
-                      )}
-                    >
-                      {m.rsi.toFixed(0)}
-                    </td>
-                    <td className="num" style={{ minWidth: 72 }}>
-                      <div className="bar-track">
-                        <div
-                          className="bar-fill teal"
-                          style={{ width: `${Math.max(4, m.rangePosition * 100)}%` }}
-                        />
-                      </div>
-                    </td>
-                    <td className="num muted">{m.atrPct.toFixed(2)}</td>
-                    <td className="num muted">{formatCompact(m.quoteVolume)}</td>
-                    <td className="muted" style={{ maxWidth: 220, whiteSpace: 'normal' }}>
-                      {m.setupReason}
-                    </td>
-                  </tr>
+                    </div>
+                    <div className="scanner-card__metrics">
+                      <span className="muted">Vol {m.volumeAnomaly.toFixed(2)}×</span>
+                      <span
+                        className={cn(
+                          'num',
+                          m.rsi > 70 ? 'down' : m.rsi < 30 ? 'up' : 'muted',
+                        )}
+                      >
+                        RSI {m.rsi.toFixed(0)}
+                      </span>
+                      <span className="muted">ATR {m.atrPct.toFixed(2)}%</span>
+                      <span className="muted">{formatCompact(m.quoteVolume)}</span>
+                    </div>
+                    <div className="bar-track scanner-card__range">
+                      <div
+                        className="bar-fill teal"
+                        style={{ width: `${Math.max(4, m.rangePosition * 100)}%` }}
+                      />
+                    </div>
+                    <div className="scanner-card__thesis muted">{m.setupReason}</div>
+                  </button>
                 ))}
-              </tbody>
-            </table>
+              </div>
+              <div className="table-scroll scanner-table-wrap">
+                <table className="table scanner-table">
+                  <thead>
+                    <tr>
+                      <th>Coin</th>
+                      <th>Setup</th>
+                      <th className="num">Score</th>
+                      <th className="num">Price</th>
+                      <th className="num">24h</th>
+                      <th className="num">vs BTC</th>
+                      <th className="num">Vol×</th>
+                      <th className="num">RSI</th>
+                      <th className="num">Range</th>
+                      <th className="num">ATR%</th>
+                      <th className="num">Quote vol</th>
+                      <th>Thesis</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((m) => (
+                      <tr
+                        key={m.symbol}
+                        className={cn(focusSymbol === m.symbol && 'active')}
+                        onClick={() => setFocusSymbol(m.symbol)}
+                      >
+                        <td>
+                          <strong style={{ fontFamily: 'var(--font-ui)' }}>{m.base}</strong>
+                        </td>
+                        <td>
+                          <span className={`tag ${m.setup}`}>{m.setup}</span>
+                        </td>
+                        <td className="num amber">{m.setupScore.toFixed(0)}</td>
+                        <td className="num">{formatPrice(m.price)}</td>
+                        <td className="num">
+                          <Pct value={m.change24h} />
+                        </td>
+                        <td className="num">
+                          <Pct value={m.relStrengthBtc} />
+                        </td>
+                        <td className="num">{m.volumeAnomaly.toFixed(2)}</td>
+                        <td
+                          className={cn(
+                            'num',
+                            m.rsi > 70 ? 'down' : m.rsi < 30 ? 'up' : 'muted',
+                          )}
+                        >
+                          {m.rsi.toFixed(0)}
+                        </td>
+                        <td className="num" style={{ minWidth: 72 }}>
+                          <div className="bar-track">
+                            <div
+                              className="bar-fill teal"
+                              style={{ width: `${Math.max(4, m.rangePosition * 100)}%` }}
+                            />
+                          </div>
+                        </td>
+                        <td className="num muted">{m.atrPct.toFixed(2)}</td>
+                        <td className="num muted">{formatCompact(m.quoteVolume)}</td>
+                        <td className="muted" style={{ maxWidth: 220, whiteSpace: 'normal' }}>
+                          {m.setupReason}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </Panel>
       </div>

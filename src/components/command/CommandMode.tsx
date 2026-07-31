@@ -205,87 +205,93 @@ export function CommandMode() {
           {fundingList.length === 0 ? (
             <div className="empty-state">Loading futures premium index…</div>
           ) : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Pair</th>
-                  <th className="num">Funding</th>
-                  <th className="num">Mark</th>
-                </tr>
-              </thead>
-              <tbody>
-                {fundingList.map((f) => (
-                  <tr key={f.symbol} onClick={() => setFocusSymbol(f.symbol)}>
-                    <td>{f.symbol.replace('USDT', '')}</td>
-                    <td className={`num ${f.fundingRate >= 0 ? 'up' : 'down'}`}>
-                      {(f.fundingRate * 100).toFixed(4)}%
-                    </td>
-                    <td className="num muted">{formatPrice(f.markPrice)}</td>
+            <div className="table-scroll">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Pair</th>
+                    <th className="num">Funding</th>
+                    <th className="num">Mark</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {fundingList.map((f) => (
+                    <tr key={f.symbol} onClick={() => setFocusSymbol(f.symbol)}>
+                      <td>{f.symbol.replace('USDT', '')}</td>
+                      <td className={`num ${f.fundingRate >= 0 ? 'up' : 'down'}`}>
+                        {(f.fundingRate * 100).toFixed(4)}%
+                      </td>
+                      <td className="num muted">{formatPrice(f.markPrice)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </Panel>
 
         <Panel title="Volume anomalies" meta="vs recent 1h mean">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Coin</th>
-                <th className="num">×Vol</th>
-                <th className="num">24h</th>
-                <th className="num">RSI</th>
-              </tr>
-            </thead>
-            <tbody>
-              {volSpike.map((m) => (
-                <tr key={m.symbol} onClick={() => setFocusSymbol(m.symbol)}>
-                  <td>
-                    <strong>{m.base}</strong>
-                  </td>
-                  <td className="num amber">{m.volumeAnomaly.toFixed(2)}×</td>
-                  <td className="num">
-                    <Pct value={m.change24h} />
-                  </td>
-                  <td className="num muted">{m.rsi.toFixed(0)}</td>
+          <div className="table-scroll">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Coin</th>
+                  <th className="num">×Vol</th>
+                  <th className="num">24h</th>
+                  <th className="num">RSI</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {volSpike.map((m) => (
+                  <tr key={m.symbol} onClick={() => setFocusSymbol(m.symbol)}>
+                    <td>
+                      <strong>{m.base}</strong>
+                    </td>
+                    <td className="num amber">{m.volumeAnomaly.toFixed(2)}×</td>
+                    <td className="num">
+                      <Pct value={m.change24h} />
+                    </td>
+                    <td className="num muted">{m.rsi.toFixed(0)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Panel>
 
         <Panel title="Tape leaders" meta="24h quote volume" className="span-1">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Coin</th>
-                <th className="num">Price</th>
-                <th className="num">Δ%</th>
-                <th className="num">Volume</th>
-              </tr>
-            </thead>
-            <tbody>
-              {volLeaders.map((t, i) => (
-                <tr key={t.symbol} onClick={() => setFocusSymbol(t.symbol)}>
-                  <td className="muted">{i + 1}</td>
-                  <td>
-                    <strong>{t.base}</strong>
-                  </td>
-                  <td className="num">{formatPrice(t.lastPrice)}</td>
-                  <td className="num">
-                    <Pct value={t.priceChangePercent} />
-                  </td>
-                  <td className="num muted">{formatCompact(t.quoteVolume)}</td>
+          <div className="table-scroll">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Coin</th>
+                  <th className="num">Price</th>
+                  <th className="num">Δ%</th>
+                  <th className="num">Volume</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {volLeaders.map((t, i) => (
+                  <tr key={t.symbol} onClick={() => setFocusSymbol(t.symbol)}>
+                    <td className="muted">{i + 1}</td>
+                    <td>
+                      <strong>{t.base}</strong>
+                    </td>
+                    <td className="num">{formatPrice(t.lastPrice)}</td>
+                    <td className="num">
+                      <Pct value={t.priceChangePercent} />
+                    </td>
+                    <td className="num muted">{formatCompact(t.quoteVolume)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Panel>
 
         <Panel title="Momentum extremes" meta="top / bottom 24h">
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div className="split-2">
             <div>
               <div className="filter-label" style={{ marginBottom: 6 }}>
                 Gainers
@@ -323,7 +329,9 @@ export function CommandMode() {
       </div>
       <div className="footer-note">
         <span>COMMAND · market pulse + opportunity surface</span>
-        <span>Binance spot WS · futures funding · local S/R engine</span>
+        <span className="footer-note__secondary">
+          Binance spot WS · futures funding · local S/R engine
+        </span>
       </div>
     </div>
   )

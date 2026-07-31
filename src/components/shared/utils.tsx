@@ -37,7 +37,7 @@ export function Panel({
     <section className={cn('panel', className)} style={style}>
       <header className="panel-header">
         <div className="panel-title">{title}</div>
-        <div className="row-flex">
+        <div className="panel-header__end">
           {actions}
           {meta ? <div className="panel-meta">{meta}</div> : null}
         </div>
