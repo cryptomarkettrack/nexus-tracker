@@ -1,5 +1,13 @@
 import { create } from 'zustand'
 import {
+  backfillAutoTrades,
+  decideAutoOpen,
+  decideCandleExit,
+  decideFlipExit,
+  decideLiveExit,
+  isAutoEnabled,
+} from '../lib/autoTrader'
+import {
   BinanceSocket,
   allTickerStream,
   fetchAllTickers,
@@ -35,6 +43,7 @@ import type {
   Position,
   SectorBucket,
   Ticker24h,
+  TradePlan,
   Trendline,
   VolumeProfile,
   WatchLevel,
@@ -42,13 +51,20 @@ import type {
 } from '../lib/types'
 
 const POSITIONS_KEY = 'nexus-positions-v1'
+const AUTO_SYMBOLS_KEY = 'nexus-auto-symbols-v1'
+const AUTO_AWAY_KEY = 'nexus-auto-away-v1'
+const LAST_SEEN_KEY = 'nexus-last-seen-v1'
 
 function loadPositions(): Position[] {
   try {
     const raw = localStorage.getItem(POSITIONS_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw) as Position[]
-    return Array.isArray(parsed) ? parsed : []
+    if (!Array.isArray(parsed)) return []
+    return parsed.map((p) => ({
+      ...p,
+      source: p.source ?? 'manual',
+    }))
   } catch {
     return []
   }
@@ -60,6 +76,63 @@ function savePositions(positions: Position[]) {
   } catch {
     /* ignore quota */
   }
+}
+
+function loadAutoSymbols(): string[] {
+  try {
+    const raw = localStorage.getItem(AUTO_SYMBOLS_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as string[]
+    return Array.isArray(parsed) ? parsed.filter((s) => typeof s === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function saveAutoSymbols(symbols: string[]) {
+  try {
+    localStorage.setItem(AUTO_SYMBOLS_KEY, JSON.stringify(symbols))
+  } catch {
+    /* ignore */
+  }
+}
+
+function loadAwaySince(): number {
+  try {
+    const raw = localStorage.getItem(LAST_SEEN_KEY)
+    if (!raw) return Date.now() - 24 * 60 * 60_000
+    const n = parseInt(raw, 10)
+    return Number.isFinite(n) ? n : Date.now() - 24 * 60 * 60_000
+  } catch {
+    return Date.now() - 24 * 60 * 60_000
+  }
+}
+
+function touchLastSeen() {
+  try {
+    localStorage.setItem(LAST_SEEN_KEY, String(Date.now()))
+  } catch {
+    /* ignore */
+  }
+}
+
+function loadAwayMarker(): number {
+  try {
+    const raw = localStorage.getItem(AUTO_AWAY_KEY)
+    if (raw) {
+      const n = parseInt(raw, 10)
+      if (Number.isFinite(n)) return n
+    }
+  } catch {
+    /* ignore */
+  }
+  const away = loadAwaySince()
+  try {
+    localStorage.setItem(AUTO_AWAY_KEY, String(away))
+  } catch {
+    /* ignore */
+  }
+  return away
 }
 
 const socket = new BinanceSocket()
@@ -90,11 +163,27 @@ interface MarketState {
   watchLevels: WatchLevel[]
   positions: Position[]
   defaultSizeUsd: number
+  /** Symbols with paper autopilot enabled */
+  autoSymbols: string[]
+  /** Session marker: closed trades after this count as “while away” */
+  autoAwaySince: number
   scannerFilter: 'all' | 'breakout' | 'volume-spike' | 'strength' | 'mean-reversion' | 'squeeze'
   setScannerFilter: (f: MarketState['scannerFilter']) => void
   setDefaultSizeUsd: (n: number) => void
-  openPosition: (p: Omit<Position, 'id' | 'openedAt' | 'status'>) => void
-  closePosition: (id: string, mark: number) => void
+  toggleAuto: (symbol: string) => void
+  openPosition: (
+    p: Omit<Position, 'id' | 'openedAt' | 'status'> & { source?: 'manual' | 'auto' },
+  ) => void
+  closePosition: (
+    id: string,
+    mark: number,
+    reason?: Position['closeReason'],
+    closedAt?: number,
+  ) => void
+  /** Manage open stops/targets from live marks (all symbols) */
+  tickPositionExits: () => void
+  /** Open/close autopilot for the focused symbol using current plan inputs */
+  runAutoForFocus: (plan: TradePlan | null) => void
   lastRefresh: number
   bootstrap: () => Promise<void>
   refreshFocus: () => Promise<void>
@@ -105,10 +194,16 @@ let unsubTicker: (() => void) | null = null
 let unsubKline: (() => void) | null = null
 let metricsTimer: ReturnType<typeof setInterval> | null = null
 let fundingTimer: ReturnType<typeof setInterval> | null = null
+let exitTickTimer: ReturnType<typeof setInterval> | null = null
 let candleCache = new Map<string, Candle[]>()
 let bootstrapped = false
 let bootstrapPromise: Promise<void> | null = null
 let focusRequestId = 0
+/** Avoid double-backfill per symbol per session */
+const backfilledSymbols = new Set<string>()
+/** Candle reconcile once per open position id per session */
+const reconciledIds = new Set<string>()
+let lastExitTick = 0
 
 async function enrichCandles(symbols: string[]) {
   // fetch a batch of 1h candles for RSI/ATR/volume anomaly (rate-limit friendly)
@@ -193,21 +288,35 @@ export const useMarketStore = create<MarketState>((set, get) => ({
   watchLevels: [],
   positions: loadPositions(),
   defaultSizeUsd: 1000,
+  autoSymbols: loadAutoSymbols(),
+  autoAwaySince: loadAwayMarker(),
   scannerFilter: 'all',
   setScannerFilter: (f) => set({ scannerFilter: f }),
   setDefaultSizeUsd: (n) => set({ defaultSizeUsd: Math.max(10, n) }),
+  toggleAuto: (symbol) => {
+    const cur = get().autoSymbols
+    const on = cur.includes(symbol)
+    const autoSymbols = on ? cur.filter((s) => s !== symbol) : [...cur, symbol]
+    saveAutoSymbols(autoSymbols)
+    set({ autoSymbols })
+    if (!on) {
+      // Enabling: catch up performance history + start managing this symbol
+      void get().refreshFocus()
+    }
+  },
   openPosition: (p) => {
     const pos: Position = {
       ...p,
-      id: `${p.symbol}-${Date.now()}`,
+      source: p.source ?? 'manual',
+      id: `${p.source === 'auto' ? 'auto-' : ''}${p.symbol}-${Date.now()}`,
       openedAt: Date.now(),
       status: 'open',
     }
-    const positions = [pos, ...get().positions].slice(0, 40)
+    const positions = [pos, ...get().positions].slice(0, 80)
     savePositions(positions)
     set({ positions })
   },
-  closePosition: (id, mark) => {
+  closePosition: (id, mark, reason = 'manual', closedAt) => {
     const positions = get().positions.map((p) => {
       if (p.id !== id || p.status !== 'open') return p
       const pnlPct =
@@ -217,14 +326,116 @@ export const useMarketStore = create<MarketState>((set, get) => ({
       return {
         ...p,
         status: 'closed' as const,
-        closedAt: Date.now(),
+        closedAt: closedAt ?? Date.now(),
         closePrice: mark,
         realizedPnlUsd: (pnlPct / 100) * p.sizeUsd,
+        closeReason: reason,
       }
     })
     savePositions(positions)
     set({ positions })
   },
+
+  tickPositionExits: () => {
+    const now = Date.now()
+    if (now - lastExitTick < 1500) return
+    lastExitTick = now
+    touchLastSeen()
+
+    const { positions, tickers, livePrice, focusSymbol } = get()
+    const open = positions.filter((p) => p.status === 'open')
+    if (!open.length) return
+
+    for (const p of open) {
+      const mark =
+        p.symbol === focusSymbol && livePrice != null && livePrice > 0
+          ? livePrice
+          : tickers.get(p.symbol)?.lastPrice
+      if (mark == null || mark <= 0) continue
+      const exit = decideLiveExit(p, mark)
+      if (exit?.exit) {
+        get().closePosition(p.id, exit.price, exit.reason)
+      }
+    }
+  },
+
+  runAutoForFocus: (plan) => {
+    const {
+      focusSymbol,
+      autoSymbols,
+      positions,
+      livePrice,
+      tickers,
+      defaultSizeUsd,
+      candles,
+    } = get()
+    if (!isAutoEnabled(autoSymbols, focusSymbol)) return
+
+    const mark =
+      livePrice ?? tickers.get(focusSymbol)?.lastPrice ?? plan?.entry ?? 0
+    if (!mark || mark <= 0) return
+
+    // 1) Reconcile open positions against candles (hits while app was closed)
+    const openHere = positions.filter(
+      (p) => p.status === 'open' && p.symbol === focusSymbol,
+    )
+    for (const p of openHere) {
+      if (!reconciledIds.has(p.id) && candles.length) {
+        reconciledIds.add(p.id)
+        const candleExit = decideCandleExit(p, candles)
+        if (candleExit?.exit) {
+          get().closePosition(p.id, candleExit.price, candleExit.reason, candleExit.at)
+          continue
+        }
+      }
+      const live = decideLiveExit(p, mark)
+      if (live?.exit) {
+        get().closePosition(p.id, live.price, live.reason)
+        continue
+      }
+      if (p.source === 'auto' && plan) {
+        const flip = decideFlipExit(p, plan)
+        if (flip?.exit) {
+          get().closePosition(p.id, mark, 'flip')
+        }
+      }
+    }
+
+    // 2) One-shot historical backfill so returning to a coin shows prior paper performance
+    if (!backfilledSymbols.has(focusSymbol) && candles.length >= 40) {
+      backfilledSymbols.add(focusSymbol)
+      const filled = backfillAutoTrades({
+        symbol: focusSymbol,
+        base: focusSymbol.replace('USDT', ''),
+        candles,
+        sizeUsd: defaultSizeUsd,
+        existing: get().positions,
+      })
+      if (filled.length) {
+        const merged = [...filled, ...get().positions].slice(0, 80)
+        savePositions(merged)
+        set({ positions: merged })
+      }
+    }
+
+    // 3) Open new auto position from plan
+    const decision = decideAutoOpen(plan, get().positions)
+    if (decision.open && decision.side && plan) {
+      get().openPosition({
+        symbol: focusSymbol,
+        base: plan.base,
+        side: decision.side,
+        entry: mark,
+        stop: plan.stop,
+        target1: plan.target1,
+        target2: plan.target2,
+        sizeUsd: defaultSizeUsd,
+        note: `Auto · ${decision.reason ?? plan.trigger}`,
+        source: 'auto',
+      })
+    }
+  },
+
   lastRefresh: 0,
 
   hydrateMetrics: () => {
@@ -271,6 +482,7 @@ export const useMarketStore = create<MarketState>((set, get) => ({
       watchLevels: watch.slice(0, 40),
       lastRefresh: Date.now(),
     })
+    get().tickPositionExits()
   },
 
   bootstrap: async () => {
@@ -327,6 +539,29 @@ export const useMarketStore = create<MarketState>((set, get) => ({
               /* ignore */
             }
           }, 60_000)
+
+          if (exitTickTimer) clearInterval(exitTickTimer)
+          exitTickTimer = setInterval(() => get().tickPositionExits(), 3_000)
+
+          // Reconcile any open positions that may have hit stop/T1 while offline
+          void (async () => {
+            const open = get().positions.filter((p) => p.status === 'open')
+            for (const p of open) {
+              try {
+                const kl = candleCache.get(p.symbol) ?? (await fetchKlines(p.symbol, '1h', 48))
+                candleCache.set(p.symbol, kl)
+                reconciledIds.add(p.id)
+                const exit = decideCandleExit(p, kl)
+                if (exit?.exit) {
+                  get().closePosition(p.id, exit.price, exit.reason, exit.at)
+                }
+              } catch {
+                /* skip */
+              }
+              await sleep(100)
+            }
+            get().tickPositionExits()
+          })()
 
           // keep enriching more symbols over time
           void (async () => {
@@ -463,6 +698,9 @@ export const useMarketStore = create<MarketState>((set, get) => ({
           )
           set({ tickers, tickerList })
         }
+
+        // Autopilot: manage exits on live prints
+        get().tickPositionExits()
       })
     } catch (e) {
       set({ error: e instanceof Error ? e.message : 'Focus load failed' })

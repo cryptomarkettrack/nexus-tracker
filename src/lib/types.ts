@@ -147,6 +147,9 @@ export interface Position {
   closedAt?: number
   closePrice?: number
   realizedPnlUsd?: number
+  /** manual chip vs autopilot */
+  source?: 'manual' | 'auto'
+  closeReason?: 'stop' | 'target1' | 'target2' | 'flip' | 'manual' | 'reconcile'
 }
 
 export interface VolumeProfileBin {
