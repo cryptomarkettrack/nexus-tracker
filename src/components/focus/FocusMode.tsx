@@ -62,12 +62,18 @@ export function FocusMode() {
       .slice(0, 4)
   }, [maLevels])
 
+  const chg = ticker?.priceChangePercent
+
   return (
     <div className="mode-view mode-view--focus">
       <div className="grid-focus">
         <Panel
           title={`${base} / USDT`}
-          meta={`${focusInterval} · live`}
+          meta={
+            price != null
+              ? `${formatPrice(price)}${chg != null ? ` · ${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%` : ''}`
+              : `${focusInterval} · live`
+          }
           className="focus-chart-panel"
           actions={
             <div className="chip-row focus-chart-actions">
@@ -82,6 +88,7 @@ export function FocusMode() {
               {INTERVALS.map((iv) => (
                 <button
                   key={iv}
+                  type="button"
                   className={cn('chip', focusInterval === iv && 'active')}
                   onClick={() => setFocusInterval(iv)}
                 >
@@ -91,6 +98,21 @@ export function FocusMode() {
             </div>
           }
         >
+          {/* Mobile: quick pairs sit under the chart header, above the candles */}
+          <div className="focus-mobile-toolbar">
+            <div className="chip-row chip-row--scroll">
+              {QUICK.map((qck) => (
+                <button
+                  key={qck.symbol}
+                  type="button"
+                  className={cn('chip', focusSymbol === qck.symbol && 'active')}
+                  onClick={() => setFocusSymbol(qck.symbol)}
+                >
+                  {qck.base}
+                </button>
+              ))}
+            </div>
+          </div>
           {candles.length ? (
             <div className="focus-chart-stage">
               <PriceChart
@@ -108,7 +130,7 @@ export function FocusMode() {
 
         <aside className="focus-sidebar">
           <Panel title="Navigate" meta="quick" className="focus-side focus-side--nav">
-            <div className="chip-row" style={{ marginBottom: 8 }}>
+            <div className="chip-row focus-nav-quick" style={{ marginBottom: 8 }}>
               {QUICK.map((qck) => (
                 <button
                   key={qck.symbol}
@@ -126,6 +148,7 @@ export function FocusMode() {
               value={q}
               onChange={(e) => setQ(e.target.value)}
               style={{ marginBottom: 8 }}
+              enterKeyHint="search"
             />
             <div className="scroll-y focus-side-scroll">
               {suggestions.map((t) => (

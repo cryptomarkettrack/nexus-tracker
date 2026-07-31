@@ -592,12 +592,18 @@ button:disabled {
   flex-direction: column;
   min-height: 0;
   flex: 1;
+  padding: 0;
 }
 
 .focus-chart-stage {
   flex: 1;
   min-height: 0;
   position: relative;
+}
+
+/* Quick pairs above chart — mobile only (desktop uses Navigate panel) */
+.focus-mobile-toolbar {
+  display: none;
 }
 
 .focus-sidebar {
@@ -899,41 +905,103 @@ button:disabled {
   .grid-command .span-2 {
     grid-column: span 2;
   }
-  .grid-focus {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(320px, 50vh) auto auto;
+  /* Focus: chart on top, full-width sections stacked below */
+  .mode-view--focus {
+    height: 100%;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    display: block;
   }
+
+  .mode-view--focus .grid-focus {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    min-height: min-content;
+    flex: none;
+    gap: 10px;
+  }
+
   .focus-chart-panel {
-    grid-column: 1;
-    grid-row: 1;
+    grid-column: auto;
+    grid-row: auto;
+    height: auto;
+    flex: 0 0 auto;
+    min-height: 0;
   }
+
+  .focus-chart-panel .panel-body {
+    flex: none;
+  }
+
+  .focus-chart-stage {
+    flex: none;
+    height: min(58vh, 520px);
+    min-height: 300px;
+  }
+
+  .chart-wrap--focus {
+    height: 100%;
+    min-height: 100%;
+  }
+
   .focus-sidebar {
-    grid-column: 1;
-    grid-row: 2;
-    flex-direction: row;
-    flex-wrap: wrap;
+    grid-column: auto;
+    grid-row: auto;
+    flex-direction: column;
+    flex-wrap: nowrap;
     max-height: none;
     overflow: visible;
+    height: auto;
+    gap: 10px;
   }
+
   .focus-sidebar > .panel {
-    flex: 1 1 220px;
-    max-height: 280px;
+    flex: 0 0 auto;
+    max-height: none;
+    height: auto;
   }
+
+  .focus-sidebar > .panel .panel-body {
+    flex: none;
+    overflow: visible;
+  }
+
   .focus-side--nav,
   .focus-side--zones,
   .focus-side--context {
-    max-height: 280px;
+    max-height: none;
+    flex: 0 0 auto;
   }
+
+  .focus-side-scroll {
+    flex: none;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .focus-side--nav .focus-side-scroll {
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
   .trade-desk {
-    grid-column: 1;
-    grid-row: 3;
+    grid-column: auto;
+    grid-row: auto;
+    flex: 0 0 auto;
   }
+
+  .trade-desk .panel-body {
+    max-height: none;
+    overflow: visible;
+  }
+
   .trade-desk-layout {
     grid-template-columns: 1fr 1fr;
   }
-  .focus-chart-stage {
-    min-height: 320px;
-  }
+
   .grid-radar {
     grid-template-columns: 1fr;
   }
@@ -1098,26 +1166,36 @@ button:disabled {
     white-space: normal;
   }
 
-  .mode-view--focus {
-    overflow: auto;
-  }
-
-  .grid-focus {
-    grid-template-rows: minmax(280px, 42vh) auto auto;
-    height: auto;
-    min-height: 0;
-  }
-
   .focus-chart-stage {
-    min-height: 260px;
+    height: min(52vh, 440px);
+    min-height: 280px;
+  }
+
+  .focus-chart-panel .panel-header {
+    align-items: flex-start;
+    gap: 6px;
   }
 
   .focus-chart-actions {
     max-width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px;
   }
 
   .focus-chart-actions .chip {
-    padding: 4px 8px;
+    flex: 0 0 auto;
+    padding: 6px 10px;
+  }
+
+  .focus-mobile-toolbar {
+    display: block;
+    padding: 8px 10px 0;
+  }
+
+  .focus-side--nav .focus-nav-quick {
+    display: none; /* pairs already in toolbar above chart */
   }
 
   .footer-note {
@@ -1253,7 +1331,15 @@ button:disabled {
   .mode-view--focus {
     height: auto;
     min-height: 100%;
+    /* .main is the scroll container on phone */
     overflow: visible;
+    display: block;
+    padding: 6px;
+    padding-bottom: 16px;
+  }
+
+  .mode-view--focus .grid-focus {
+    gap: 8px;
   }
 
   .panel-header {
@@ -1262,6 +1348,11 @@ button:disabled {
 
   .panel-body {
     padding: 8px 10px;
+  }
+
+  /* Chart body keeps edge-to-edge candles; toolbar has its own padding */
+  .focus-chart-panel .panel-body {
+    padding: 0;
   }
 
   .panel-title {
@@ -1341,30 +1432,23 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
-  .trade-desk .panel-body {
-    max-height: none;
-  }
-
-  .focus-sidebar {
-    flex-direction: column;
-  }
-
-  .focus-sidebar > .panel {
-    flex: 1 1 auto;
-    max-height: none;
-  }
-
-  .focus-side--nav {
-    max-height: 220px;
-  }
-
-  .focus-side--zones,
-  .focus-side--context {
-    max-height: 320px;
-  }
-
+  /* —— Focus phone: chart dominates, sections below —— */
   .focus-chart-panel .panel-header {
-    align-items: flex-start;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 8px 10px;
+  }
+
+  .focus-chart-panel .panel-header__end {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .focus-chart-panel .panel-meta {
+    font-size: 12px;
+    color: var(--text-0);
+    font-variant-numeric: tabular-nums;
   }
 
   .focus-chart-actions {
@@ -1372,17 +1456,38 @@ button:disabled {
     justify-content: flex-start;
   }
 
-  .grid-focus {
-    grid-template-rows: minmax(240px, 38vh) auto auto;
-    gap: 8px;
-  }
-
   .focus-chart-stage {
-    min-height: 220px;
+    /* Chart owns most of the first screen; scroll for panels below */
+    height: 58dvh;
+    min-height: 300px;
+    max-height: 560px;
   }
 
   .chart-wrap {
-    min-height: 220px;
+    min-height: 100%;
+  }
+
+  .chart-wrap--focus {
+    min-height: 100%;
+  }
+
+  .focus-sidebar {
+    flex-direction: column;
+  }
+
+  .focus-sidebar > .panel {
+    flex: 0 0 auto;
+    max-height: none;
+  }
+
+  .focus-side--nav .focus-side-scroll {
+    max-height: 180px;
+    overflow-y: auto;
+  }
+
+  .focus-side--zones,
+  .focus-side--context {
+    max-height: none;
   }
 
   .zone-band {
