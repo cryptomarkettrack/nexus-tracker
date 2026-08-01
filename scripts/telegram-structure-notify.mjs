@@ -215,6 +215,12 @@ function run(cmd, args, cwd) {
   })
 }
 
+function biasEmoji(side) {
+  if (side === 'long') return '🟢'
+  if (side === 'short') return '🔴'
+  return '⚪'
+}
+
 function buildCaption(structure) {
   if (!structure) return 'NEXUS structure snapshot'
   const lines = []
@@ -227,6 +233,32 @@ function buildCaption(structure) {
   lines.push(`Price ${formatPrice(structure.price)}${chg}`)
   if (structure.setup) {
     lines.push(`Setup: ${structure.setup}${structure.setupReason ? ` — ${structure.setupReason}` : ''}`)
+  }
+
+  // Trade desk first column — market bias (FLAT / LONG / SHORT)
+  const bias = structure.bias
+  if (bias?.side) {
+    lines.push('')
+    const conf =
+      bias.confidence != null && Number.isFinite(bias.confidence)
+        ? ` · ${Number(bias.confidence).toFixed(0)}% conf`
+        : ''
+    lines.push(
+      `${biasEmoji(bias.side)} ${String(bias.side).toUpperCase()} · ${structure.interval}${conf}`,
+    )
+    const rsiPart =
+      structure.rsi != null && Number.isFinite(structure.rsi)
+        ? ` · RSI ${Number(structure.rsi).toFixed(0)}`
+        : ''
+    if (bias.maBias != null || bias.masBelow != null || bias.masAbove != null) {
+      lines.push(
+        `MA stack ${bias.maBias ?? '—'} · ${bias.masBelow ?? 0} below / ${bias.masAbove ?? 0} above${rsiPart}`,
+      )
+    }
+    const reasons = Array.isArray(bias.reasons) ? bias.reasons.slice(0, 4) : []
+    for (const r of reasons) {
+      lines.push(`• ${r}`)
+    }
   }
 
   const zones = structure.watchZones ?? []

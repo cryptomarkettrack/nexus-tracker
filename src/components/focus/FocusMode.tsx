@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { formatPrice } from '../../lib/indicators'
+import { buildTradePlan } from '../../lib/tradePlan'
 import type { Interval } from '../../lib/types'
 import { useMarketStore } from '../../stores/marketStore'
 import { Panel, Pct, cn } from '../shared/utils'
@@ -81,6 +82,21 @@ export function FocusMode() {
       .slice(0, 4)
   }, [maLevels])
 
+  /** Same plan as Trade desk bias column — exported on window for Telegram captions */
+  const tradePlan = useMemo(() => {
+    if (price == null) return null
+    return buildTradePlan({
+      symbol: focusSymbol,
+      base,
+      price,
+      zones: watchZones,
+      maLevels,
+      metric,
+      funding: fund,
+      trendline: trendlines[0],
+    })
+  }, [focusSymbol, base, price, watchZones, maLevels, metric, fund, trendlines])
+
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
       if (!searchWrapRef.current?.contains(e.target as Node)) {
@@ -158,6 +174,20 @@ export function FocusMode() {
           atrPct: metric?.atrPct ?? null,
           relStrengthBtc: metric?.relStrengthBtc ?? null,
           volumeAnomaly: metric?.volumeAnomaly ?? null,
+          /** Trade desk bias card (LONG / SHORT / FLAT) */
+          bias: tradePlan
+            ? {
+                side: tradePlan.side,
+                confidence: tradePlan.confidence,
+                maBias: tradePlan.maBias,
+                masBelow: tradePlan.masBelow,
+                masAbove: tradePlan.masAbove,
+                reasons: tradePlan.reasons,
+                trigger: tradePlan.trigger,
+                invalidation: tradePlan.invalidation,
+                planSide: tradePlan.planSide,
+              }
+            : null,
           volumeProfile: volumeProfile
             ? {
                 poc: volumeProfile.poc,
@@ -202,6 +232,7 @@ export function FocusMode() {
     price,
     chg,
     metric,
+    tradePlan,
     volumeProfile,
     watchZones,
     trendlines,
