@@ -17,6 +17,7 @@ import {
   fetchAllTickers,
   fetchFundingRates,
   fetchKlines,
+  KLINES_MAX_LIMIT,
   klineStream,
   parseWsTicker,
 } from '../lib/binance'
@@ -31,7 +32,11 @@ import {
 } from '../lib/indicators'
 import { SECTOR_ORDER, SECTORS } from '../lib/sectors'
 import { computeNearbyMaLevels, MA_KLINE_LIMIT, MA_TIMEFRAMES } from '../lib/ma'
+
+/** Focus chart history — full Binance page (1000 bars). On 1d ≈ ~2.7y. */
+const FOCUS_KLINE_LIMIT = KLINES_MAX_LIMIT
 import { detectTrendlines, nearestChartLevels } from '../lib/trendlines'
+import { readBootParams } from '../lib/bootParams'
 import { buildWatchZones, collectZoneSources } from '../lib/zones'
 import type {
   AutoBinding,
@@ -54,6 +59,8 @@ import type {
   WatchLevel,
   WatchZone,
 } from '../lib/types'
+
+const boot = readBootParams()
 
 const POSITIONS_KEY = 'nexus-positions-v1'
 const AUTO_BINDINGS_KEY = 'nexus-auto-bindings-v1'
@@ -294,7 +301,7 @@ function computeSectors(list: Ticker24h[]): SectorBucket[] {
 }
 
 export const useMarketStore = create<MarketState>((set, get) => ({
-  mode: 'focus',
+  mode: boot.mode ?? 'focus',
   setMode: (m) => {
     set({ mode: m })
     if (m === 'focus') void get().refreshFocus()
@@ -308,12 +315,12 @@ export const useMarketStore = create<MarketState>((set, get) => ({
   breadth: null,
   regime: null,
   sectors: [],
-  focusSymbol: 'BTCUSDT',
+  focusSymbol: boot.symbol ?? 'BTCUSDT',
   setFocusSymbol: (s) => {
     set({ focusSymbol: s, mode: 'focus' })
     void get().refreshFocus()
   },
-  focusInterval: '1d',
+  focusInterval: boot.interval ?? '1d',
   setFocusInterval: (i) => {
     set({ focusInterval: i })
     void get().refreshFocus()
@@ -657,7 +664,7 @@ export const useMarketStore = create<MarketState>((set, get) => ({
     const req = ++focusRequestId
     try {
       const [candles, ...maTfCandles] = await Promise.all([
-        fetchKlines(focusSymbol, focusInterval, 200),
+        fetchKlines(focusSymbol, focusInterval, FOCUS_KLINE_LIMIT),
         ...MA_TIMEFRAMES.map((tf) =>
           fetchKlines(focusSymbol, tf, MA_KLINE_LIMIT).catch(() => [] as Candle[]),
         ),

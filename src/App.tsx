@@ -4,7 +4,10 @@ import { FocusMode } from './components/focus/FocusMode'
 import { Shell } from './components/layout/Shell'
 import { RadarMode } from './components/radar/RadarMode'
 import { ScannerMode } from './components/scanner/ScannerMode'
+import { readBootParams } from './lib/bootParams'
 import { useMarketStore } from './stores/marketStore'
+
+const boot = readBootParams()
 
 export default function App() {
   const mode = useMarketStore((s) => s.mode)
@@ -15,6 +18,16 @@ export default function App() {
   useEffect(() => {
     void bootstrap()
   }, [bootstrap])
+
+  useEffect(() => {
+    if (!boot.snapshot) return
+    document.documentElement.dataset.snapshot = '1'
+    document.body.dataset.snapshot = '1'
+    return () => {
+      delete document.documentElement.dataset.snapshot
+      delete document.body.dataset.snapshot
+    }
+  }, [])
 
   return (
     <Shell>

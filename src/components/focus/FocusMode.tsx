@@ -133,8 +133,85 @@ export function FocusMode() {
     }
   }
 
+  const structureReady = candles.length > 0
+
+  useEffect(() => {
+    if (!structureReady) {
+      document.documentElement.removeAttribute('data-focus-ready')
+      return
+    }
+    // Brief delay so lightweight-charts paints before headless capture
+    const t = window.setTimeout(() => {
+      document.documentElement.setAttribute('data-focus-ready', '1')
+      document.documentElement.setAttribute('data-focus-symbol', focusSymbol)
+      document.documentElement.setAttribute('data-focus-interval', focusInterval)
+      try {
+        const snapshot = {
+          symbol: focusSymbol,
+          base,
+          interval: focusInterval,
+          price: price ?? null,
+          change24h: chg ?? null,
+          setup: metric?.setup ?? null,
+          setupReason: metric?.setupReason ?? null,
+          rsi: metric?.rsi ?? null,
+          atrPct: metric?.atrPct ?? null,
+          relStrengthBtc: metric?.relStrengthBtc ?? null,
+          volumeAnomaly: metric?.volumeAnomaly ?? null,
+          volumeProfile: volumeProfile
+            ? {
+                poc: volumeProfile.poc,
+                vah: volumeProfile.vah,
+                val: volumeProfile.val,
+              }
+            : null,
+          watchZones: watchZones.map((z) => ({
+            label: z.label,
+            side: z.side,
+            low: z.low,
+            high: z.high,
+            mid: z.mid,
+            distancePct: z.distancePct,
+            sources: z.sources,
+          })),
+          trendline: trendlines[0]
+            ? {
+                type: trendlines[0].type,
+                currentPrice: trendlines[0].currentPrice,
+                distancePct: trendlines[0].distancePct,
+                broken: trendlines[0].broken,
+              }
+            : null,
+          capturedAt: Date.now(),
+        }
+        ;(window as unknown as { __NEXUS_STRUCTURE__?: typeof snapshot }).__NEXUS_STRUCTURE__ =
+          snapshot
+      } catch {
+        /* ignore */
+      }
+    }, 900)
+    return () => {
+      window.clearTimeout(t)
+      document.documentElement.removeAttribute('data-focus-ready')
+    }
+  }, [
+    structureReady,
+    focusSymbol,
+    focusInterval,
+    base,
+    price,
+    chg,
+    metric,
+    volumeProfile,
+    watchZones,
+    trendlines,
+  ])
+
   return (
-    <div className="mode-view mode-view--focus">
+    <div
+      className="mode-view mode-view--focus"
+      data-focus-ready={structureReady ? '1' : '0'}
+    >
       <div className="focus-nav" ref={searchWrapRef}>
         <div className="focus-nav__identity">
           <span className="focus-nav__pair">{base}/USDT</span>
@@ -196,7 +273,7 @@ export function FocusMode() {
       </div>
 
       <div className="grid-focus">
-        <div className="focus-main-row">
+        <div className="focus-main-row" data-testid="focus-structure">
           <Panel
             title={`${base} / USDT`}
             meta={

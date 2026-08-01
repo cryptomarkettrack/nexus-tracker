@@ -65,12 +65,16 @@ export async function fetchAllTickers(): Promise<Ticker24h[]> {
   return tickers.sort((a, b) => b.quoteVolume - a.quoteVolume)
 }
 
+/** Binance REST max candles per `/api/v3/klines` request */
+export const KLINES_MAX_LIMIT = 1000
+
 export async function fetchKlines(
   symbol: string,
   interval: Interval,
-  limit = 200,
+  limit = KLINES_MAX_LIMIT,
 ): Promise<Candle[]> {
-  const url = `${SPOT_REST}/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
+  const capped = Math.min(Math.max(1, limit), KLINES_MAX_LIMIT)
+  const url = `${SPOT_REST}/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${capped}`
   const res = await fetch(url)
   if (!res.ok) throw new Error(`klines ${symbol} ${res.status}`)
   const data = (await res.json()) as (string | number)[][]
