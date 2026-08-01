@@ -202,7 +202,7 @@ export function TradeDesk({
             </button>
             {autoOn && onLockedTf && (
               <span className="muted" style={{ fontSize: 9, display: 'block', marginTop: 4 }}>
-                Using {lockedInterval} desk conditions · opens when conf ≥ {AUTO_MIN_CONFIDENCE}% ·
+                Using {lockedInterval} desk conditions · opens when conf ≥ {AUTO_MIN_CONFIDENCE}% + R≥1.5 ·
                 exits stop / T1 / bias flip · paper only
               </span>
             )}
@@ -299,7 +299,7 @@ export function TradeDesk({
                 )}
                 {autoOn && onLockedTf && autoPerf.closedCount === 0 && autoPerf.openCount === 0 && (
                   <div className="muted" style={{ fontSize: 9, marginTop: 4 }}>
-                    Watching {lockedInterval} — will open when edge ≥ {AUTO_MIN_CONFIDENCE}% conf
+                    Watching {lockedInterval} — will open when edge ≥ {AUTO_MIN_CONFIDENCE}% conf and R≥1.5
                   </div>
                 )}
               </div>

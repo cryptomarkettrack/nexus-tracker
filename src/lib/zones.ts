@@ -94,7 +94,17 @@ function zoneTitle(side: 'above' | 'below', labels: string[], n: number): string
   const dir = side === 'above' ? 'Resistance' : 'Support'
   if (n >= 3) return `${dir} confluence`
   if (n === 2) return `${dir} zone`
-  return labels[0] ?? dir
+  // Always keep structural role clear (avoid "Pressing SUPPORT" for a level above price)
+  const raw = labels[0]
+  if (!raw) return dir
+  const upper = raw.toUpperCase()
+  if (side === 'above' && (upper === 'SUPPORT' || upper.includes('SUPPORT'))) {
+    return `Resistance (${raw})`
+  }
+  if (side === 'below' && (upper === 'RESISTANCE' || upper.includes('RESISTANCE'))) {
+    return `Support (${raw})`
+  }
+  return raw
 }
 
 /** Gather MA + structure + trendline into zone sources */

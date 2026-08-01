@@ -1,15 +1,20 @@
 import type { AutoBinding, Candle, Interval, Position, TradePlan } from './types'
-import { positionPnl } from './tradePlan'
+import { MIN_RR1, positionPnl, sanitizeTradeLevels } from './tradePlan'
 
 export type CloseReason = NonNullable<Position['closeReason']>
 
-export const AUTO_MIN_CONFIDENCE = 55
+/** Higher bar: only open when plan has real multi-factor conviction */
+export const AUTO_MIN_CONFIDENCE = 68
 /** Paper notional used for every autopilot open */
 export const AUTO_SIZE_USD = 10_000
 /** Minutes after a close before auto may re-enter the same symbol */
-export const AUTO_COOLDOWN_MIN = 20
+export const AUTO_COOLDOWN_MIN = 30
+/** Extra cooldown after a stop-out (avoid revenge re-entries) */
+export const AUTO_LOSS_COOLDOWN_MIN = 55
 /** Max auto backfill trades to inject when catching up */
-export const AUTO_BACKFILL_LIMIT = 12
+export const AUTO_BACKFILL_LIMIT = 8
+/** Minimum R:R for autopilot opens */
+export const AUTO_MIN_RR = MIN_RR1
 
 export interface AutoOpenDecision {
   open: boolean
@@ -81,28 +86,51 @@ export function lastCloseAt(positions: Position[], symbol: string): number | nul
   return max
 }
 
+function lastCloseMeta(
+  positions: Position[],
+  symbol: string,
+): { at: number; wasLoss: boolean } | null {
+  let best: Position | null = null
+  for (const p of positions) {
+    if (p.symbol !== symbol || p.status !== 'closed' || !p.closedAt) continue
+    if (!best || (best.closedAt ?? 0) < p.closedAt) best = p
+  }
+  if (!best?.closedAt) return null
+  const pnl = best.realizedPnlUsd ?? 0
+  return { at: best.closedAt, wasLoss: pnl < 0 }
+}
+
 export function inCooldown(
   positions: Position[],
   symbol: string,
   now = Date.now(),
   cooldownMin = AUTO_COOLDOWN_MIN,
 ): boolean {
-  const last = lastCloseAt(positions, symbol)
-  if (last == null) return false
-  return now - last < cooldownMin * 60_000
+  const meta = lastCloseMeta(positions, symbol)
+  if (!meta) return false
+  const mins = meta.wasLoss ? AUTO_LOSS_COOLDOWN_MIN : cooldownMin
+  return now - meta.at < mins * 60_000
 }
 
 /** Decide whether autopilot should open from the current trade plan. */
 export function decideAutoOpen(
   plan: TradePlan | null | undefined,
   positions: Position[],
-  opts?: { minConfidence?: number; now?: number },
+  opts?: { minConfidence?: number; minRr?: number; now?: number },
 ): AutoOpenDecision {
   if (!plan) return { open: false }
   if (plan.side === 'flat') return { open: false, reason: 'flat bias' }
   const minConf = opts?.minConfidence ?? AUTO_MIN_CONFIDENCE
+  const minRr = opts?.minRr ?? AUTO_MIN_RR
   if (plan.confidence < minConf) {
     return { open: false, reason: `confidence ${plan.confidence.toFixed(0)}% < ${minConf}%` }
+  }
+  if (plan.rr1 < minRr) {
+    return { open: false, reason: `R:R ${plan.rr1.toFixed(2)} < ${minRr}` }
+  }
+  // planSide must match directional side (never open the "if I had to" opposite)
+  if (plan.side !== plan.planSide) {
+    return { open: false, reason: 'side/planSide mismatch' }
   }
   if (hasOpenPosition(positions, plan.symbol)) {
     return { open: false, reason: 'already in position' }
@@ -115,6 +143,30 @@ export function decideAutoOpen(
     side: plan.planSide,
     reason: plan.reasons[0] ?? plan.trigger,
   }
+}
+
+/**
+ * Whether the live mark is close enough to the plan entry to take the auto fill.
+ * Avoids chasing when the desk wants a limit near a zone.
+ */
+export function entryIsReachable(
+  plan: TradePlan,
+  mark: number,
+  maxDriftAtr = 0.35,
+): boolean {
+  if (!mark || mark <= 0 || !plan.atr) return false
+  const drift = Math.abs(mark - plan.entry)
+  // Market-compatible triggers: allow fill at spot
+  if (plan.trigger.startsWith('Market-compatible')) return drift <= plan.atr * 0.6
+  // Limit-style: only if mark is near the planned entry (or better)
+  if (plan.side === 'long') {
+    // Willing to buy at or below plan entry (+ small slip)
+    return mark <= plan.entry + plan.atr * maxDriftAtr
+  }
+  if (plan.side === 'short') {
+    return mark >= plan.entry - plan.atr * maxDriftAtr
+  }
+  return false
 }
 
 /** Live mark-to-market exit (stop or T1). Conservative: stop wins if both would fire. */
@@ -141,7 +193,8 @@ export function decideFlipExit(
   if (plan.confidence < minConfidence) return null
   if (plan.side === 'flat') return null
   if (plan.side === pos.side) return null
-  // Opposite side with conviction — exit at spot (caller supplies mark as price)
+  // Require real opposite edge + R:R so we don't flip on noise
+  if (plan.rr1 < AUTO_MIN_RR) return null
   return { exit: true, price: 0, reason: 'flip' }
 }
 
@@ -180,8 +233,8 @@ export function decideCandleExit(
 }
 
 /**
- * Lightweight historical sim so opening a coin shows how autopilot would have
- * performed over recent bars (RSI + close structure). Paper only.
+ * Historical sim aligned with live filters: RSI extremes only with
+ * bounce/rejection confirmation and min R:R geometry.
  */
 export function backfillAutoTrades(input: {
   symbol: string
@@ -195,10 +248,13 @@ export function backfillAutoTrades(input: {
 }): Position[] {
   const { symbol, base, candles, sizeUsd, interval, existing } = input
   const limit = input.limit ?? AUTO_BACKFILL_LIMIT
-  if (candles.length < 30) return []
+  if (candles.length < 40) return []
 
   const existingAuto = existing.filter(
-    (p) => p.symbol === symbol && p.source === 'auto' && (p.interval == null || p.interval === interval),
+    (p) =>
+      p.symbol === symbol &&
+      p.source === 'auto' &&
+      (p.interval == null || p.interval === interval),
   )
   // Only backfill if we have almost no auto history for this symbol+TF
   if (existingAuto.length >= 3) return []
@@ -208,14 +264,16 @@ export function backfillAutoTrades(input: {
   let open: Position | null = null
   let lastExitIdx = -999
 
-  for (let i = 20; i < candles.length; i++) {
+  for (let i = 30; i < candles.length; i++) {
     const c = candles[i]!
+    const prev = candles[i - 1]!
     const rsi = rsiAt(closes, i, 14)
     const atr = atrAt(candles, i, 14)
+    const sma20 = smaAt(closes, i, 20)
+    const sma50 = i >= 50 ? smaAt(closes, i, 50) : sma20
     if (!atr || atr <= 0) continue
 
     if (open) {
-      // exit on bar
       if (open.side === 'long') {
         if (c.low <= open.stop) {
           trades.push(closeSim(open, open.stop, c.time, 'stop'))
@@ -243,7 +301,6 @@ export function backfillAutoTrades(input: {
           continue
         }
       }
-      // force flat on last bar
       if (i === candles.length - 1) {
         trades.push(closeSim(open, c.close, c.time, 'manual'))
         open = null
@@ -251,26 +308,43 @@ export function backfillAutoTrades(input: {
       continue
     }
 
-    if (i - lastExitIdx < 3) continue
+    // Wider spacing after exits (was 3 bars)
+    if (i - lastExitIdx < 5) continue
     if (trades.length >= limit) break
 
-    // Entry heuristics mirroring desk bias (simplified)
+    // Stricter entries: extreme RSI + confirmation candle + trend alignment
     let side: 'long' | 'short' | null = null
-    if (rsi < 35 && c.close > candles[i - 1]!.close) side = 'long'
-    else if (rsi > 68 && c.close < candles[i - 1]!.close) side = 'short'
-    else if (rsi < 40 && closes[i]! > smaAt(closes, i, 20)) side = 'long'
-    else if (rsi > 60 && closes[i]! < smaAt(closes, i, 20)) side = 'short'
+    const bullBar = c.close > c.open && c.close > prev.close
+    const bearBar = c.close < c.open && c.close < prev.close
+    const aboveSma = c.close > sma20 && sma20 >= sma50 * 0.998
+    const belowSma = c.close < sma20 && sma20 <= sma50 * 1.002
+
+    // Long: oversold bounce — require bullish reclaim, not catch a falling knife
+    if (rsi < 32 && bullBar && c.close > sma20) side = 'long'
+    // Short: overbought rejection — require bearish fail
+    else if (rsi > 68 && bearBar && c.close < sma20) side = 'short'
+    // Mild trend continuation only with momentum alignment
+    else if (rsi >= 40 && rsi <= 55 && bullBar && aboveSma && c.close > prev.high) side = 'long'
+    else if (rsi >= 45 && rsi <= 60 && bearBar && belowSma && c.close < prev.low) side = 'short'
 
     if (!side) continue
 
     const entry = c.close
-    const stop = side === 'long' ? entry - atr * 1.15 : entry + atr * 1.15
-    const target1 = side === 'long' ? entry + atr : entry - atr
-    const target2 = side === 'long' ? entry + atr * 2 : entry - atr * 2
+    let stop = side === 'long' ? entry - atr * 1.15 : entry + atr * 1.15
+    let target1 = side === 'long' ? entry + atr * 1.75 : entry - atr * 1.75
+    let target2 = side === 'long' ? entry + atr * 2.6 : entry - atr * 2.6
+    const clean = sanitizeTradeLevels(side, entry, stop, target1, target2, atr)
+    stop = clean.stop
+    target1 = clean.target1
+    target2 = clean.target2
+
+    const risk = Math.abs(entry - stop)
+    const reward = Math.abs(target1 - entry)
+    if (risk <= 0 || reward / risk < AUTO_MIN_RR) continue
 
     const openReason =
       `Backfill ${side.toUpperCase()} on ${interval} · RSI ${rsi.toFixed(0)} · ` +
-      `price vs SMA20 / momentum heuristic on historical ${interval} bars`
+      `confirmed ${side === 'long' ? 'reclaim' : 'rejection'} · R${(reward / risk).toFixed(1)}`
     open = {
       id: `auto-bf-${symbol}-${interval}-${c.time}`,
       symbol,
@@ -290,7 +364,6 @@ export function backfillAutoTrades(input: {
     }
   }
 
-  // Keep closed only (drop dangling open from sim — live engine will re-decide)
   return trades.filter((t) => t.status === 'closed').slice(-limit)
 }
 

@@ -6,9 +6,11 @@ import {
   decideCandleExit,
   decideFlipExit,
   decideLiveExit,
+  entryIsReachable,
   isAutoActiveOnInterval,
   isAutoEnabled,
 } from '../lib/autoTrader'
+import { describePlanOpen, levelsForFill } from '../lib/tradePlan'
 import {
   BinanceSocket,
   allTickerStream,
@@ -29,7 +31,6 @@ import {
 } from '../lib/indicators'
 import { SECTOR_ORDER, SECTORS } from '../lib/sectors'
 import { computeNearbyMaLevels, MA_KLINE_LIMIT, MA_TIMEFRAMES } from '../lib/ma'
-import { describePlanOpen } from '../lib/tradePlan'
 import { detectTrendlines, nearestChartLevels } from '../lib/trendlines'
 import { buildWatchZones, collectZoneSources } from '../lib/zones'
 import type {
@@ -480,15 +481,19 @@ export const useMarketStore = create<MarketState>((set, get) => ({
     // 3) Open new auto position from plan on locked TF
     const decision = decideAutoOpen(plan, get().positions)
     if (decision.open && decision.side && plan) {
+      // Don't chase: only fill when mark is near the planned entry / trigger
+      if (!entryIsReachable(plan, mark)) return
+      // Rebuild stop/targets from the actual fill so geometry never inverts
+      const levels = levelsForFill(decision.side, mark, plan)
       const openReason = describePlanOpen(plan, lockedInterval, 'auto')
       get().openPosition({
         symbol: focusSymbol,
         base: plan.base,
         side: decision.side,
         entry: mark,
-        stop: plan.stop,
-        target1: plan.target1,
-        target2: plan.target2,
+        stop: levels.stop,
+        target1: levels.target1,
+        target2: levels.target2,
         sizeUsd: AUTO_SIZE_USD,
         note: plan.reasons[0] ?? plan.trigger,
         openReason,
