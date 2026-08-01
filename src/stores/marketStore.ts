@@ -690,7 +690,7 @@ export const useMarketStore = create<MarketState>((set, get) => ({
       const trendlines = detectTrendlines(candles, {
         lookback: 3,
         maxLines: 1,
-        touchTolPct: 0.0045,
+        touchTolPct: 0.006,
         minSpan: 5,
       })
       // Wider MA net for clustering into zones (chart only shows zones)
