@@ -9,7 +9,6 @@ import {
   type Time,
   type UTCTimestamp,
 } from 'lightweight-charts'
-import { formatPrice } from '../../lib/indicators'
 import { sampleTrendline } from '../../lib/trendlines'
 import type { Candle, Trendline, WatchZone } from '../../lib/types'
 
@@ -18,9 +17,25 @@ interface ZoneBox {
   top: number
   height: number
   side: 'above' | 'below'
-  label: string
-  midLabel: string
   strength: number
+}
+
+function toBar(c: Candle) {
+  return {
+    time: Math.floor(c.time / 1000) as UTCTimestamp,
+    open: c.open,
+    high: c.high,
+    low: c.low,
+    close: c.close,
+  }
+}
+
+/** True when the chart host has a real layout box (not 0×0 before flex settles). */
+function hasLayoutSize(el: HTMLElement | null): boolean {
+  if (!el) return false
+  const w = el.clientWidth
+  const h = el.clientHeight
+  return w >= 40 && h >= 40
 }
 
 export function PriceChart({
@@ -40,11 +55,17 @@ export function PriceChart({
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const trendSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const structureKeyRef = useRef('')
+  const lastBarTimeRef = useRef(0)
+  /** Re-fit once the host gets a non-zero size after data was applied. */
+  const needsFitRef = useRef(false)
   const [zoneBoxes, setZoneBoxes] = useState<ZoneBox[]>([])
 
   useEffect(() => {
-    if (!containerRef.current) return
-    const chart = createChart(containerRef.current, {
+    const el = containerRef.current
+    if (!el) return
+
+    const chart = createChart(el, {
       autoSize: true,
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
@@ -85,11 +106,37 @@ export function PriceChart({
     })
     chartRef.current = chart
     seriesRef.current = series
+
+    const fitIfNeeded = () => {
+      if (!needsFitRef.current || !hasLayoutSize(el)) return
+      needsFitRef.current = false
+      // Double-rAF: wait for layout + lightweight-charts internal measure
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (!chartRef.current || !hasLayoutSize(el)) {
+            needsFitRef.current = true
+            return
+          }
+          chartRef.current.timeScale().fitContent()
+        })
+      })
+    }
+
+    const ro = new ResizeObserver(() => {
+      fitIfNeeded()
+    })
+    ro.observe(el)
+    // Immediate attempt in case size is already valid
+    fitIfNeeded()
+
     return () => {
+      ro.disconnect()
       chart.remove()
       chartRef.current = null
       seriesRef.current = null
       trendSeriesRef.current = null
+      structureKeyRef.current = ''
+      needsFitRef.current = false
     }
   }, [])
 
@@ -102,8 +149,7 @@ export function PriceChart({
     const updateBoxes = () => {
       const boxes: ZoneBox[] = []
       for (const z of zones) {
-        // ensure band has visual thickness even for single-level clusters
-        const pad = (z.high - z.low) < z.mid * 0.0015 ? z.mid * 0.0012 : 0
+        const pad = z.high - z.low < z.mid * 0.0015 ? z.mid * 0.0012 : 0
         const hi = z.high + pad
         const lo = z.low - pad
         const y1 = series.priceToCoordinate(hi)
@@ -116,8 +162,6 @@ export function PriceChart({
           top,
           height,
           side: z.side,
-          label: z.label,
-          midLabel: formatPrice(z.mid),
           strength: z.strength,
         })
       }
@@ -139,29 +183,29 @@ export function PriceChart({
     }
   }, [zones, candles])
 
-  const structureKeyRef = useRef('')
-  const lastBarTimeRef = useRef(0)
-
   useEffect(() => {
     const series = seriesRef.current
     const chart = chartRef.current
+    const el = containerRef.current
     if (!series || !chart || !candles.length) return
 
     const firstT = candles[0]!.time
     const lastT = candles[candles.length - 1]!.time
-    const structureKey = `${symbol}|${candles.length}|${firstT}|${trendlines[0]?.id ?? ''}`
+    // Include last open time so a full history reload always re-applies
+    const structureKey = `${symbol}|${candles.length}|${firstT}|${lastT}|${trendlines[0]?.id ?? ''}`
     const structuralChange = structureKey !== structureKeyRef.current
 
     if (structuralChange) {
-      series.setData(
-        candles.map((c) => ({
-          time: Math.floor(c.time / 1000) as Time,
-          open: c.open,
-          high: c.high,
-          low: c.low,
-          close: c.close,
-        })),
-      )
+      const bars = candles.map(toBar)
+      // Guard against malformed / empty after map
+      if (bars.length < 2) {
+        series.setData(bars)
+        structureKeyRef.current = structureKey
+        lastBarTimeRef.current = lastT
+        return
+      }
+
+      series.setData(bars)
       structureKeyRef.current = structureKey
       lastBarTimeRef.current = lastT
 
@@ -197,17 +241,24 @@ export function PriceChart({
         }
       }
 
-      chart.timeScale().fitContent()
+      // Always schedule a fit; apply immediately only if layout is ready
+      needsFitRef.current = true
+      if (hasLayoutSize(el)) {
+        needsFitRef.current = false
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            if (!chartRef.current) return
+            if (!hasLayoutSize(containerRef.current)) {
+              needsFitRef.current = true
+              return
+            }
+            chartRef.current.timeScale().fitContent()
+          })
+        })
+      }
     } else {
-      // live bar update only
       const last = candles[candles.length - 1]!
-      series.update({
-        time: Math.floor(last.time / 1000) as UTCTimestamp,
-        open: last.open,
-        high: last.high,
-        low: last.low,
-        close: last.close,
-      })
+      series.update(toBar(last))
       lastBarTimeRef.current = last.time
     }
   }, [candles, trendlines, symbol])
@@ -217,9 +268,8 @@ export function PriceChart({
     const series = seriesRef.current
     if (!series || !candles.length || livePrice == null || !Number.isFinite(livePrice)) return
     const last = candles[candles.length - 1]!
-    const time = Math.floor(last.time / 1000) as UTCTimestamp
     series.update({
-      time,
+      time: Math.floor(last.time / 1000) as UTCTimestamp,
       open: last.open,
       high: Math.max(last.high, livePrice),
       low: Math.min(last.low, livePrice),
@@ -238,14 +288,9 @@ export function PriceChart({
             style={{
               top: z.top,
               height: z.height,
-              opacity: 0.35 + z.strength * 0.35,
+              opacity: 0.28 + z.strength * 0.32,
             }}
-          >
-            <span className="zone-band__tag">
-              {z.label}
-              <em>{z.midLabel}</em>
-            </span>
-          </div>
+          />
         ))}
       </div>
     </div>

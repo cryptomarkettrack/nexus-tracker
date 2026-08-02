@@ -662,6 +662,23 @@ export const useMarketStore = create<MarketState>((set, get) => ({
   refreshFocus: async () => {
     const { focusSymbol, focusInterval } = get()
     const req = ++focusRequestId
+
+    // Drop stale series immediately so the chart doesn't paint wrong history,
+    // and so the WS handler never merges into a previous TF/symbol set.
+    if (unsubKline) {
+      unsubKline()
+      unsubKline = null
+    }
+    set({
+      candles: [],
+      trendlines: [],
+      levels: [],
+      maLevels: [],
+      watchZones: [],
+      volumeProfile: null,
+      livePrice: get().tickers.get(focusSymbol)?.lastPrice ?? null,
+    })
+
     try {
       const [candles, ...maTfCandles] = await Promise.all([
         fetchKlines(focusSymbol, focusInterval, FOCUS_KLINE_LIMIT),
@@ -670,6 +687,10 @@ export const useMarketStore = create<MarketState>((set, get) => ({
         ),
       ])
       if (req !== focusRequestId) return
+      if (!candles.length) {
+        set({ error: `No klines for ${focusSymbol} ${focusInterval}` })
+        return
+      }
 
       candleCache.set(focusSymbol, candles)
 
@@ -722,12 +743,9 @@ export const useMarketStore = create<MarketState>((set, get) => ({
       })
 
       // Live kline stream for dynamic last candle + price
-      if (unsubKline) {
-        unsubKline()
-        unsubKline = null
-      }
       const stream = klineStream(focusSymbol, focusInterval)
       unsubKline = socket.subscribe(stream, (raw) => {
+        if (req !== focusRequestId) return
         if (get().focusSymbol !== focusSymbol || get().focusInterval !== focusInterval) return
         const msg = raw as { k?: Record<string, string | number | boolean> }
         const k = msg.k
@@ -745,10 +763,9 @@ export const useMarketStore = create<MarketState>((set, get) => ({
           takerBuyQuote: parseFloat(String(k.Q ?? '0')),
         }
         const prev = get().candles
-        if (!prev.length) {
-          set({ candles: [candle], livePrice: candle.close })
-          return
-        }
+        // Never seed history from a single WS bar — wait for REST hydrate
+        if (prev.length < 2) return
+
         const last = prev[prev.length - 1]!
         let next: Candle[]
         if (last.time === candle.time) {
@@ -777,6 +794,7 @@ export const useMarketStore = create<MarketState>((set, get) => ({
         get().tickPositionExits()
       })
     } catch (e) {
+      if (req !== focusRequestId) return
       set({ error: e instanceof Error ? e.message : 'Focus load failed' })
     }
   },
