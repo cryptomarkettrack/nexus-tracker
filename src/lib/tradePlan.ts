@@ -311,7 +311,6 @@ function prioritizeReasons(reasons: string[], bias: 'long' | 'short'): string[] 
 
 /**
  * Ensure stop/targets sit on the correct side of entry and T1 clears MIN_RR1.
- * Used by the plan builder and when autopilot fills at mark (not plan.entry).
  */
 export function sanitizeTradeLevels(
   side: 'long' | 'short',
@@ -349,34 +348,6 @@ export function sanitizeTradeLevels(
   return { entry, stop: s, target1: t1, target2: t2 }
 }
 
-/** Map a plan's risk/reward geometry onto an actual fill price (market auto-open). */
-export function levelsForFill(
-  side: 'long' | 'short',
-  fill: number,
-  plan: Pick<TradePlan, 'entry' | 'stop' | 'target1' | 'target2' | 'atr'>,
-): { stop: number; target1: number; target2: number } {
-  const risk = Math.abs(plan.entry - plan.stop)
-  const r1 = Math.abs(plan.target1 - plan.entry)
-  const r2 = Math.abs(plan.target2 - plan.entry)
-  const atr = plan.atr > 0 ? plan.atr : fill * 0.015
-  const riskUse = Math.max(risk, atr * 0.55, fill * 0.0015)
-
-  let stop: number
-  let target1: number
-  let target2: number
-  if (side === 'long') {
-    stop = fill - riskUse
-    target1 = fill + Math.max(r1, riskUse * MIN_RR1)
-    target2 = fill + Math.max(r2, riskUse * (MIN_RR1 + 0.8))
-  } else {
-    stop = fill + riskUse
-    target1 = fill - Math.max(r1, riskUse * MIN_RR1)
-    target2 = fill - Math.max(r2, riskUse * (MIN_RR1 + 0.8))
-  }
-  const clean = sanitizeTradeLevels(side, fill, stop, target1, target2, atr)
-  return { stop: clean.stop, target1: clean.target1, target2: clean.target2 }
-}
-
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n))
 }
@@ -389,41 +360,4 @@ function formatPx(n: number): string {
   if (n >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 })
   if (n >= 1) return n.toLocaleString(undefined, { maximumFractionDigits: 4 })
   return n.toPrecision(4)
-}
-
-export function positionPnl(
-  side: 'long' | 'short',
-  entry: number,
-  mark: number,
-  sizeUsd: number,
-): { pnlUsd: number; pnlPct: number } {
-  const pnlPct = side === 'long' ? ((mark - entry) / entry) * 100 : ((entry - mark) / entry) * 100
-  const pnlUsd = (pnlPct / 100) * sizeUsd
-  return { pnlUsd, pnlPct }
-}
-
-export function rMultiple(
-  side: 'long' | 'short',
-  entry: number,
-  stop: number,
-  mark: number,
-): number {
-  const risk = Math.abs(entry - stop)
-  if (risk <= 0) return 0
-  const move = side === 'long' ? mark - entry : entry - mark
-  return move / risk
-}
-
-/** Full narrative for audit log / auto open */
-export function describePlanOpen(
-  plan: TradePlan,
-  interval: string,
-  source: 'manual' | 'auto' = 'auto',
-): string {
-  const drivers = plan.reasons.length ? plan.reasons.join('; ') : 'no listed drivers'
-  const prefix = source === 'auto' ? 'Auto' : 'Manual'
-  return (
-    `${prefix} ${plan.planSide.toUpperCase()} on ${interval} · ${plan.confidence.toFixed(0)}% conf · ` +
-    `R${plan.rr1.toFixed(1)} · ${drivers}. Trigger: ${plan.trigger}. Invalidation: ${plan.invalidation}`
-  )
 }

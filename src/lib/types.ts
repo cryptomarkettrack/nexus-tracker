@@ -130,38 +130,6 @@ export interface TradePlan {
   masAbove: number
 }
 
-/** User-opened paper/live-tracked position */
-export interface Position {
-  id: string
-  symbol: string
-  base: string
-  side: 'long' | 'short'
-  entry: number
-  stop: number
-  target1: number
-  target2: number
-  sizeUsd: number
-  openedAt: number
-  note: string
-  status: 'open' | 'closed'
-  closedAt?: number
-  closePrice?: number
-  realizedPnlUsd?: number
-  /** manual chip vs autopilot */
-  source?: 'manual' | 'auto'
-  closeReason?: 'stop' | 'target1' | 'target2' | 'flip' | 'manual' | 'reconcile'
-  /** Chart timeframe the plan/auto decision used */
-  interval?: Interval
-  /** Human-readable why this position opened (bias drivers, trigger, conf) */
-  openReason?: string
-}
-
-/** Per-symbol paper autopilot lock (timeframe captured when user enables auto) */
-export interface AutoBinding {
-  symbol: string
-  interval: Interval
-}
-
 export interface VolumeProfileBin {
   price: number
   volume: number
