@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { formatPrice } from '../../lib/indicators'
 import { buildTradePlan } from '../../lib/tradePlan'
-import type { Interval } from '../../lib/types'
+import type { Interval, WatchZone } from '../../lib/types'
 import { useMarketStore } from '../../stores/marketStore'
 import { Panel, Pct, cn } from '../shared/utils'
 import { PriceChart } from './PriceChart'
@@ -105,6 +105,15 @@ export function FocusMode() {
   }
 
   const structureReady = candles.length > 0
+
+  const fightAbove = useMemo(
+    () => watchZones.find((z) => z.side === 'above') ?? null,
+    [watchZones],
+  )
+  const fightBelow = useMemo(
+    () => watchZones.find((z) => z.side === 'below') ?? null,
+    [watchZones],
+  )
 
   useEffect(() => {
     if (!structureReady) {
@@ -218,6 +227,37 @@ export function FocusMode() {
                 </span>
               )}
             </span>
+          )}
+          {(fightAbove || fightBelow) && (
+            <div
+              className="focus-nav__fights"
+              title="Next hard levels to fight (MA / structure / POC)"
+            >
+              {fightAbove && (
+                <div className="focus-nav__fight focus-nav__fight--up" title={fightLabelTitle(fightAbove)}>
+                  <span className="focus-nav__fight-dir" aria-hidden>
+                    ↑
+                  </span>
+                  <span className="focus-nav__fight-px num">{formatPrice(fightAbove.mid)}</span>
+                  <span className="focus-nav__fight-tag">{shortFightLabel(fightAbove)}</span>
+                  <span className="focus-nav__fight-dist num">
+                    +{Math.abs(fightAbove.distancePct).toFixed(2)}%
+                  </span>
+                </div>
+              )}
+              {fightBelow && (
+                <div className="focus-nav__fight focus-nav__fight--down" title={fightLabelTitle(fightBelow)}>
+                  <span className="focus-nav__fight-dir" aria-hidden>
+                    ↓
+                  </span>
+                  <span className="focus-nav__fight-px num">{formatPrice(fightBelow.mid)}</span>
+                  <span className="focus-nav__fight-tag">{shortFightLabel(fightBelow)}</span>
+                  <span className="focus-nav__fight-dist num">
+                    −{Math.abs(fightBelow.distancePct).toFixed(2)}%
+                  </span>
+                </div>
+              )}
+            </div>
           )}
         </div>
 
@@ -479,4 +519,21 @@ export function FocusMode() {
       </div>
     </div>
   )
+}
+
+/** Compact tag for nav: primary source, or confluence shorthand */
+function shortFightLabel(z: WatchZone): string {
+  if (z.sources.length >= 3) return 'Confluence'
+  if (z.sources.length === 2) return z.sources.slice(0, 2).join('+')
+  if (z.sources[0]) return z.sources[0]
+  return z.label
+}
+
+function fightLabelTitle(z: WatchZone): string {
+  const band =
+    z.high - z.low > z.mid * 0.0008
+      ? `${formatPrice(z.low)} – ${formatPrice(z.high)}`
+      : formatPrice(z.mid)
+  const src = z.sources.length ? z.sources.join(' · ') : z.label
+  return `${z.side === 'above' ? 'Overhead' : 'Underfoot'} fight @ ${band} · ${src}`
 }
