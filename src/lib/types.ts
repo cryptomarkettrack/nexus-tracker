@@ -149,6 +149,10 @@ export interface CoinMetrics {
   symbol: string
   base: string
   price: number
+  /**
+   * Percent change over the metrics window.
+   * For the live book this is 24h ticker change; for SCAN it is the selected TF window.
+   */
   change24h: number
   quoteVolume: number
   volumeAnomaly: number
@@ -165,6 +169,8 @@ export interface CoinMetrics {
   distanceToLow: number
   spreadBps: number
   trades: number
+  /** Present when metrics were built from a SCAN timeframe run */
+  scanInterval?: Interval
 }
 
 export type SetupType =

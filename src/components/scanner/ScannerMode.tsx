@@ -1,250 +1,400 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { formatCompact, formatPrice } from '../../lib/indicators'
-import type { CoinMetrics } from '../../lib/types'
-import { useMarketStore } from '../../stores/marketStore'
+import {
+  buildScannerSignals,
+  playLabel,
+  SCANNER_A_CONVICTION,
+  type ScannerSignal,
+} from '../../lib/scannerSignal'
+import type { Interval } from '../../lib/types'
+import { SCANNER_INTERVALS, useMarketStore } from '../../stores/marketStore'
 import { Panel, Pct, cn } from '../shared/utils'
 
-type ScannerFilter = ReturnType<typeof useMarketStore.getState>['scannerFilter']
-
-const FILTERS: { id: ScannerFilter; label: string; hint: string }[] = [
-  { id: 'all', label: 'All signals', hint: 'Ranked by setup score' },
-  { id: 'breakout', label: 'Breakouts', hint: 'Vol + near highs' },
-  { id: 'volume-spike', label: 'Vol spikes', hint: 'Unusual participation' },
-  { id: 'strength', label: 'Rel. strength', hint: 'Beating BTC' },
-  { id: 'mean-reversion', label: 'Reversions', hint: 'RSI extremes' },
-  { id: 'squeeze', label: 'Squeezes', hint: 'Quiet coil' },
-]
+/** Human label for how much history a TF window covers. */
+function windowHint(interval: Interval): string {
+  switch (interval) {
+    case '15m':
+      return '~1d window · 96 bars'
+    case '1h':
+      return '~3d window · 72 bars'
+    case '4h':
+      return '~10d window · 60 bars'
+    case '1d':
+      return '~2mo window · 60 bars'
+    default:
+      return interval
+  }
+}
 
 export function ScannerMode() {
-  const metrics = useMarketStore((s) => s.metrics)
-  const scannerFilter = useMarketStore((s) => s.scannerFilter)
-  const setScannerFilter = useMarketStore((s) => s.setScannerFilter)
+  const scannerMetrics = useMarketStore((s) => s.scannerMetrics)
+  const scannerWatchLevels = useMarketStore((s) => s.scannerWatchLevels)
+  const scannerInterval = useMarketStore((s) => s.scannerInterval)
+  const setScannerInterval = useMarketStore((s) => s.setScannerInterval)
+  const scannerStatus = useMarketStore((s) => s.scannerStatus)
+  const scannerProgress = useMarketStore((s) => s.scannerProgress)
+  const scannerError = useMarketStore((s) => s.scannerError)
+  const scannerScannedAt = useMarketStore((s) => s.scannerScannedAt)
+  const runScanner = useMarketStore((s) => s.runScanner)
+  const funding = useMarketStore((s) => s.funding)
+  const regime = useMarketStore((s) => s.regime)
   const setFocusSymbol = useMarketStore((s) => s.setFocusSymbol)
   const focusSymbol = useMarketStore((s) => s.focusSymbol)
   const [q, setQ] = useState('')
-  const [sort, setSort] = useState<'score' | 'vol' | 'change' | 'rs' | 'rsi'>('score')
+  const [showB, setShowB] = useState(false)
 
-  const rows = useMemo(() => {
-    let list: CoinMetrics[] = metrics
-    if (scannerFilter !== 'all') {
-      list = list.filter((m) => m.setup === scannerFilter)
+  // First open of SCAN: auto-run default TF so the board isn't empty
+  useEffect(() => {
+    if (scannerStatus === 'idle' && scannerMetrics.length === 0) {
+      void runScanner()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on mount / first idle
+  }, [])
+
+  const scanning = scannerStatus === 'scanning'
+  const hasRun = scannerStatus === 'ready' || scannerMetrics.length > 0
+
+  const { longs, shorts, totalScanned, enriched } = useMemo(() => {
+    const boards = buildScannerSignals(scannerMetrics, {
+      watchLevels: scannerWatchLevels,
+      funding,
+      regime,
+      includeB: showB,
+    })
+    let listL = boards.longs
+    let listS = boards.shorts
     if (q.trim()) {
       const qq = q.trim().toUpperCase()
-      list = list.filter((m) => m.base.includes(qq) || m.symbol.includes(qq))
+      listL = listL.filter((s) => s.base.includes(qq) || s.symbol.includes(qq))
+      listS = listS.filter((s) => s.base.includes(qq) || s.symbol.includes(qq))
     }
-    const sorted = [...list]
-    switch (sort) {
-      case 'vol':
-        sorted.sort((a, b) => b.volumeAnomaly - a.volumeAnomaly)
-        break
-      case 'change':
-        sorted.sort((a, b) => b.change24h - a.change24h)
-        break
-      case 'rs':
-        sorted.sort((a, b) => b.relStrengthBtc - a.relStrengthBtc)
-        break
-      case 'rsi':
-        sorted.sort((a, b) => a.rsi - b.rsi)
-        break
-      default:
-        sorted.sort((a, b) => b.setupScore - a.setupScore)
+    return {
+      longs: listL,
+      shorts: listS,
+      totalScanned: scannerMetrics.length,
+      enriched: scannerMetrics.filter((m) => m.atrPct > 0).length,
     }
-    return sorted
-  }, [metrics, scannerFilter, q, sort])
+  }, [scannerMetrics, scannerWatchLevels, funding, regime, showB, q])
 
-  const topInsight = rows[0]
+  const aLongs = longs.filter((s) => s.grade === 'A').length
+  const aShorts = shorts.filter((s) => s.grade === 'A').length
+
+  const onPickTf = (iv: Interval) => {
+    setScannerInterval(iv)
+  }
+
+  const onRun = () => {
+    void runScanner(scannerInterval)
+  }
+
+  const openFocus = (symbol: string) => {
+    // Open FOCUS on the same TF the scan used
+    setFocusSymbol(symbol, { interval: scannerInterval })
+  }
+
+  const scannedLabel = scannerScannedAt
+    ? new Date(scannerScannedAt).toLocaleTimeString()
+    : null
 
   return (
     <div className="mode-view">
-      <div className="grid-scanner">
-        <Panel title="Lens" meta="filters" className="scanner-lens">
-          <div className="filters">
-            <input
-              className="search-input"
-              placeholder="Filter symbol…"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              enterKeyHint="search"
-            />
-            <div>
-              <div className="filter-label">Setup type</div>
-              <div className="chip-row scanner-filter-chips">
-                {FILTERS.map((f) => (
-                  <button
-                    key={f.id}
-                    type="button"
-                    className={cn('chip scanner-filter-chip', scannerFilter === f.id && 'active')}
-                    onClick={() => setScannerFilter(f.id)}
-                  >
-                    <span className="scanner-filter-chip__label">{f.label}</span>
-                    <span className="scanner-filter-chip__hint muted">{f.hint}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <div className="filter-label">Sort</div>
-              <div className="chip-row chip-row--scroll">
-                {(
-                  [
-                    ['score', 'Score'],
-                    ['vol', 'Vol×'],
-                    ['change', '24h'],
-                    ['rs', 'vs BTC'],
-                    ['rsi', 'RSI'],
-                  ] as const
-                ).map(([id, label]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    className={cn('chip', sort === id && 'active')}
-                    onClick={() => setSort(id)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="insight scanner-help">
-              <strong>How to read this</strong>
-              <br />
-              Scanner ranks liquid USDT pairs by confluence of volume anomaly, relative strength
-              vs BTC, RSI posture, and range position. Tap a row to open FOCUS with S/R and
-              volume profile.
+      <div className="scanner-hero">
+        <div className="scanner-hero__copy">
+          <div className="scanner-hero__kicker">Conviction board</div>
+          <h2 className="scanner-hero__title">
+            LONG / SHORT on{' '}
+            <span className="scanner-hero__tf">{scannerInterval}</span>
+          </h2>
+          <p className="scanner-hero__sub muted">
+            Pick a timeframe, run the scan. RSI, range, volume, and relative strength are
+            measured on that TF — not mixed with random 24h noise. Tap a row → FOCUS on the
+            same interval.
+          </p>
+        </div>
+        <div className="scanner-hero__stats">
+          <div className="scanner-stat scanner-stat--long">
+            <div className="scanner-stat__label">Long A-grade</div>
+            <div className="scanner-stat__value num">{scanning ? '…' : aLongs}</div>
+          </div>
+          <div className="scanner-stat scanner-stat--short">
+            <div className="scanner-stat__label">Short A-grade</div>
+            <div className="scanner-stat__value num">{scanning ? '…' : aShorts}</div>
+          </div>
+          <div className="scanner-stat">
+            <div className="scanner-stat__label">Scanned</div>
+            <div className="scanner-stat__value num">
+              {scanning ? scannerProgress.done : enriched}
+              <span className="scanner-stat__suffix muted">
+                /{scanning ? scannerProgress.total : totalScanned || '—'}
+              </span>
             </div>
           </div>
-        </Panel>
-
-        <Panel
-          title="Opportunity matrix"
-          meta={`${rows.length} names`}
-          bodyClassName="scroll-y"
-          className="grow scanner-matrix"
-        >
-          {topInsight && (
-            <div className="insight">
-              <strong>Top pick · {topInsight.base}</strong> — {topInsight.setupReason} · RSI{' '}
-              {topInsight.rsi.toFixed(0)} · range pos {(topInsight.rangePosition * 100).toFixed(0)}%
-              · ATR {topInsight.atrPct.toFixed(2)}%
+          {regime && (
+            <div className={cn('scanner-stat', `scanner-stat--${regime.bias}`)}>
+              <div className="scanner-stat__label">Regime</div>
+              <div className="scanner-stat__value scanner-stat__value--sm">{regime.label}</div>
             </div>
           )}
-          {rows.length === 0 ? (
-            <div className="empty-state">No matches — wait for candle enrichment or clear filters</div>
-          ) : (
-            <>
-              <div className="scanner-cards" aria-label="Opportunity cards">
-                {rows.map((m) => (
-                  <button
-                    key={m.symbol}
-                    type="button"
-                    className={cn('scanner-card', focusSymbol === m.symbol && 'active')}
-                    onClick={() => setFocusSymbol(m.symbol)}
-                  >
-                    <div className="scanner-card__top">
-                      <strong className="scanner-card__base">{m.base}</strong>
-                      <span className={`tag ${m.setup}`}>{m.setup}</span>
-                      <span className="num amber scanner-card__score">{m.setupScore.toFixed(0)}</span>
-                    </div>
-                    <div className="scanner-card__metrics">
-                      <span className="num">{formatPrice(m.price)}</span>
-                      <Pct value={m.change24h} />
-                      <span className="muted">vs BTC</span>
-                      <Pct value={m.relStrengthBtc} />
-                    </div>
-                    <div className="scanner-card__metrics">
-                      <span className="muted">Vol {m.volumeAnomaly.toFixed(2)}×</span>
-                      <span
-                        className={cn(
-                          'num',
-                          m.rsi > 70 ? 'down' : m.rsi < 30 ? 'up' : 'muted',
-                        )}
-                      >
-                        RSI {m.rsi.toFixed(0)}
-                      </span>
-                      <span className="muted">ATR {m.atrPct.toFixed(2)}%</span>
-                      <span className="muted">{formatCompact(m.quoteVolume)}</span>
-                    </div>
-                    <div className="bar-track scanner-card__range">
-                      <div
-                        className="bar-fill teal"
-                        style={{ width: `${Math.max(4, m.rangePosition * 100)}%` }}
-                      />
-                    </div>
-                    <div className="scanner-card__thesis muted">{m.setupReason}</div>
-                  </button>
+        </div>
+        <div className="scanner-hero__controls">
+          <div className="scanner-tf">
+            <div className="filter-label">Timeframe</div>
+            <div className="chip-row chip-row--scroll scanner-tf__chips">
+              {SCANNER_INTERVALS.map((iv) => (
+                <button
+                  key={iv}
+                  type="button"
+                  className={cn('chip', scannerInterval === iv && 'active')}
+                  disabled={scanning}
+                  onClick={() => onPickTf(iv)}
+                >
+                  {iv}
+                </button>
+              ))}
+            </div>
+            <div className="scanner-tf__hint muted">{windowHint(scannerInterval)}</div>
+          </div>
+          <button
+            type="button"
+            className={cn('scanner-run', scanning && 'scanner-run--busy')}
+            disabled={scanning}
+            onClick={onRun}
+          >
+            {scanning
+              ? `Scanning ${scannerInterval}… ${scannerProgress.done}/${scannerProgress.total}`
+              : `Run ${scannerInterval} scan`}
+          </button>
+          {scannedLabel && !scanning && (
+            <div className="scanner-hero__meta muted">
+              Last run · {scannerInterval} · {scannedLabel}
+            </div>
+          )}
+          <input
+            className="search-input scanner-hero__search"
+            placeholder="Filter symbol…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            enterKeyHint="search"
+          />
+          <button
+            type="button"
+            className={cn('chip', showB && 'active')}
+            onClick={() => setShowB((v) => !v)}
+            title={`A-grade needs conviction ≥ ${SCANNER_A_CONVICTION}`}
+          >
+            {showB ? 'A + B grades' : 'A-grade only'}
+          </button>
+        </div>
+      </div>
+
+      {scannerError && (
+        <div className="scanner-banner scanner-banner--error">{scannerError}</div>
+      )}
+
+      {scanning && (
+        <div className="scanner-banner scanner-banner--progress">
+          <div className="scanner-banner__bar">
+            <div
+              className="scanner-banner__fill"
+              style={{
+                width: `${scannerProgress.total ? (100 * scannerProgress.done) / scannerProgress.total : 0}%`,
+              }}
+            />
+          </div>
+          <span>
+            Fetching {scannerInterval} candles for top liquid pairs…
+          </span>
+        </div>
+      )}
+
+      {!hasRun && !scanning && (
+        <div className="scanner-empty scanner-empty--center">
+          <div className="scanner-empty__title">Choose a timeframe and run the scan</div>
+          <p className="muted">
+            Default is 4h. Results use that TF’s RSI, range position, volume, and change vs BTC.
+          </p>
+          <button type="button" className="scanner-run" onClick={onRun}>
+            Run {scannerInterval} scan
+          </button>
+        </div>
+      )}
+
+      {(hasRun || scanning) && (
+        <div className="grid-scanner-boards">
+          <Panel
+            title={`LONG · ${scannerInterval}`}
+            meta={scanning ? 'updating…' : `${longs.length} high conviction`}
+            className="scanner-board scanner-board--long"
+            bodyClassName="scroll-y scanner-board__body"
+          >
+            <div className="scanner-board__banner scanner-board__banner--long">
+              <span className="scanner-board__side">Buy dips / ride strength</span>
+              <span className="muted">
+                Measured on {scannerInterval} · bounce · breakout · beat BTC
+              </span>
+            </div>
+            {scanning && !longs.length ? (
+              <div className="scanner-empty">
+                <div className="scanner-empty__title">Scanning…</div>
+              </div>
+            ) : longs.length === 0 ? (
+              <EmptyBoard side="long" showB={showB} onShowB={() => setShowB(true)} tf={scannerInterval} />
+            ) : (
+              <div className="scanner-signal-list" role="list">
+                {longs.map((s) => (
+                  <SignalCard
+                    key={s.symbol}
+                    signal={s}
+                    interval={scannerInterval}
+                    active={focusSymbol === s.symbol}
+                    onOpen={() => openFocus(s.symbol)}
+                  />
                 ))}
               </div>
-              <div className="table-scroll scanner-table-wrap">
-                <table className="table scanner-table">
-                  <thead>
-                    <tr>
-                      <th>Coin</th>
-                      <th>Setup</th>
-                      <th className="num">Score</th>
-                      <th className="num">Price</th>
-                      <th className="num">24h</th>
-                      <th className="num">vs BTC</th>
-                      <th className="num">Vol×</th>
-                      <th className="num">RSI</th>
-                      <th className="num">Range</th>
-                      <th className="num">ATR%</th>
-                      <th className="num">Quote vol</th>
-                      <th>Thesis</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((m) => (
-                      <tr
-                        key={m.symbol}
-                        className={cn(focusSymbol === m.symbol && 'active')}
-                        onClick={() => setFocusSymbol(m.symbol)}
-                      >
-                        <td>
-                          <strong style={{ fontFamily: 'var(--font-ui)' }}>{m.base}</strong>
-                        </td>
-                        <td>
-                          <span className={`tag ${m.setup}`}>{m.setup}</span>
-                        </td>
-                        <td className="num amber">{m.setupScore.toFixed(0)}</td>
-                        <td className="num">{formatPrice(m.price)}</td>
-                        <td className="num">
-                          <Pct value={m.change24h} />
-                        </td>
-                        <td className="num">
-                          <Pct value={m.relStrengthBtc} />
-                        </td>
-                        <td className="num">{m.volumeAnomaly.toFixed(2)}</td>
-                        <td
-                          className={cn(
-                            'num',
-                            m.rsi > 70 ? 'down' : m.rsi < 30 ? 'up' : 'muted',
-                          )}
-                        >
-                          {m.rsi.toFixed(0)}
-                        </td>
-                        <td className="num" style={{ minWidth: 72 }}>
-                          <div className="bar-track">
-                            <div
-                              className="bar-fill teal"
-                              style={{ width: `${Math.max(4, m.rangePosition * 100)}%` }}
-                            />
-                          </div>
-                        </td>
-                        <td className="num muted">{m.atrPct.toFixed(2)}</td>
-                        <td className="num muted">{formatCompact(m.quoteVolume)}</td>
-                        <td className="muted" style={{ maxWidth: 220, whiteSpace: 'normal' }}>
-                          {m.setupReason}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            )}
+          </Panel>
+
+          <Panel
+            title={`SHORT · ${scannerInterval}`}
+            meta={scanning ? 'updating…' : `${shorts.length} high conviction`}
+            className="scanner-board scanner-board--short"
+            bodyClassName="scroll-y scanner-board__body"
+          >
+            <div className="scanner-board__banner scanner-board__banner--short">
+              <span className="scanner-board__side">Fade rips / ride weakness</span>
+              <span className="muted">
+                Measured on {scannerInterval} · fade · breakdown · lag BTC
+              </span>
+            </div>
+            {scanning && !shorts.length ? (
+              <div className="scanner-empty">
+                <div className="scanner-empty__title">Scanning…</div>
               </div>
-            </>
-          )}
-        </Panel>
-      </div>
+            ) : shorts.length === 0 ? (
+              <EmptyBoard side="short" showB={showB} onShowB={() => setShowB(true)} tf={scannerInterval} />
+            ) : (
+              <div className="scanner-signal-list" role="list">
+                {shorts.map((s) => (
+                  <SignalCard
+                    key={s.symbol}
+                    signal={s}
+                    interval={scannerInterval}
+                    active={focusSymbol === s.symbol}
+                    onOpen={() => openFocus(s.symbol)}
+                  />
+                ))}
+              </div>
+            )}
+          </Panel>
+        </div>
+      )}
     </div>
+  )
+}
+
+function EmptyBoard({
+  side,
+  showB,
+  onShowB,
+  tf,
+}: {
+  side: 'long' | 'short'
+  showB: boolean
+  onShowB: () => void
+  tf: Interval
+}) {
+  return (
+    <div className="scanner-empty">
+      <div className="scanner-empty__title">
+        No {side === 'long' ? 'LONG' : 'SHORT'} edges on {tf}
+      </div>
+      <p className="muted">
+        Nothing clears the multi-factor bar on this timeframe. Try another TF, or wait for a
+        cleaner setup.
+      </p>
+      {!showB && (
+        <button type="button" className="chip" onClick={onShowB}>
+          Include B-grade candidates
+        </button>
+      )}
+    </div>
+  )
+}
+
+function SignalCard({
+  signal: s,
+  interval,
+  active,
+  onOpen,
+}: {
+  signal: ScannerSignal
+  interval: Interval
+  active: boolean
+  onOpen: () => void
+}) {
+  return (
+    <button
+      type="button"
+      role="listitem"
+      className={cn(
+        'scanner-signal',
+        `scanner-signal--${s.side}`,
+        s.grade === 'A' && 'scanner-signal--a',
+        active && 'active',
+      )}
+      onClick={onOpen}
+    >
+      <div className="scanner-signal__head">
+        <div className="scanner-signal__id">
+          <strong className="scanner-signal__base">{s.base}</strong>
+          <span className={cn('scanner-signal__side-tag', `scanner-signal__side-tag--${s.side}`)}>
+            {s.side.toUpperCase()}
+          </span>
+          <span className="tag scanner-signal__play">{playLabel(s.play)}</span>
+          <span className="tag scanner-signal__tf">{interval}</span>
+          {s.grade === 'B' && <span className="tag scanner-signal__grade">B</span>}
+        </div>
+        <div className="scanner-signal__conv">
+          <span className="scanner-signal__conv-val num">{s.conviction}</span>
+          <span className="scanner-signal__conv-label muted">conv</span>
+        </div>
+      </div>
+
+      <div className="scanner-signal__metrics">
+        <span className="num">{formatPrice(s.price)}</span>
+        <Pct value={s.change24h} />
+        <span className="muted">vs BTC</span>
+        <Pct value={s.relStrengthBtc} />
+        <span
+          className={cn(
+            'num',
+            s.rsi > 70 ? 'down' : s.rsi < 30 ? 'up' : 'muted',
+          )}
+        >
+          RSI {s.rsi.toFixed(0)}
+        </span>
+        <span className="muted">Vol {s.volumeAnomaly.toFixed(1)}×</span>
+        <span className="muted">{formatCompact(s.quoteVolume)}</span>
+      </div>
+
+      <div className="scanner-signal__range" title={`Position in ${interval} window range`}>
+        <div className="bar-track">
+          <div
+            className={cn('bar-fill', s.side === 'long' ? 'teal' : 'down')}
+            style={{ width: `${Math.max(4, s.rangePosition * 100)}%` }}
+          />
+        </div>
+        <span className="muted num">{(s.rangePosition * 100).toFixed(0)}%</span>
+      </div>
+
+      <div className="scanner-signal__thesis">{s.thesis}</div>
+      {s.drivers.length > 1 && (
+        <ul className="scanner-signal__drivers">
+          {s.drivers.slice(0, 3).map((d) => (
+            <li key={d}>{d}</li>
+          ))}
+        </ul>
+      )}
+    </button>
   )
 }

@@ -49,6 +49,32 @@ const boot = readBootParams()
 
 const socket = new BinanceSocket()
 
+/** SCAN timeframe options (structure-friendly). */
+export const SCANNER_INTERVALS: Interval[] = ['15m', '1h', '4h', '1d']
+
+/** How many bars to pull per TF for RSI / range / vol. */
+function scannerBarLimit(interval: Interval): number {
+  switch (interval) {
+    case '15m':
+      return 96 // ~1 day
+    case '1h':
+      return 72 // 3 days
+    case '4h':
+      return 60 // 10 days
+    case '1d':
+      return 60 // ~2 months
+    default:
+      return 72
+  }
+}
+
+/** Universe size for a scan run (top liquid USDT pairs by quote vol). */
+const SCANNER_UNIVERSE = 200
+/** Concurrent kline fetches per batch (keeps under Binance REST weight). */
+const SCANNER_FETCH_CONCURRENCY = 6
+
+export type ScannerStatus = 'idle' | 'scanning' | 'ready' | 'error'
+
 interface MarketState {
   mode: Mode
   setMode: (m: Mode) => void
@@ -62,7 +88,7 @@ interface MarketState {
   regime: MarketRegime | null
   sectors: SectorBucket[]
   focusSymbol: string
-  setFocusSymbol: (s: string) => void
+  setFocusSymbol: (s: string, opts?: { interval?: Interval }) => void
   focusInterval: Interval
   setFocusInterval: (i: Interval) => void
   candles: Candle[]
@@ -73,8 +99,17 @@ interface MarketState {
   livePrice: number | null
   volumeProfile: VolumeProfile | null
   watchLevels: WatchLevel[]
-  scannerFilter: 'all' | 'breakout' | 'volume-spike' | 'strength' | 'mean-reversion' | 'squeeze'
-  setScannerFilter: (f: MarketState['scannerFilter']) => void
+  /** SCAN tab: selected TF + results of last run */
+  scannerInterval: Interval
+  setScannerInterval: (i: Interval) => void
+  scannerMetrics: CoinMetrics[]
+  scannerWatchLevels: WatchLevel[]
+  scannerStatus: ScannerStatus
+  scannerProgress: { done: number; total: number }
+  scannerError: string | null
+  scannerScannedAt: number
+  /** Fetch klines on scannerInterval and rebuild conviction metrics */
+  runScanner: (interval?: Interval) => Promise<void>
   lastRefresh: number
   bootstrap: () => Promise<void>
   refreshFocus: () => Promise<void>
@@ -86,9 +121,12 @@ let unsubKline: (() => void) | null = null
 let metricsTimer: ReturnType<typeof setInterval> | null = null
 let fundingTimer: ReturnType<typeof setInterval> | null = null
 let candleCache = new Map<string, Candle[]>()
+/** Keyed `${interval}|${symbol}` — SCAN TF candles (separate from 1h cmd cache). */
+let scannerCandleCache = new Map<string, Candle[]>()
 let bootstrapped = false
 let bootstrapPromise: Promise<void> | null = null
 let focusRequestId = 0
+let scannerRequestId = 0
 
 async function enrichCandles(symbols: string[]) {
   // fetch a batch of 1h candles for RSI/ATR/volume anomaly (rate-limit friendly)
@@ -102,6 +140,10 @@ async function enrichCandles(symbols: string[]) {
       /* skip */
     }
   }
+}
+
+function scannerCacheKey(interval: Interval, symbol: string) {
+  return `${interval}|${symbol}`
 }
 
 function sleep(ms: number) {
@@ -143,6 +185,13 @@ export const useMarketStore = create<MarketState>((set, get) => ({
   setMode: (m) => {
     set({ mode: m })
     if (m === 'focus') void get().refreshFocus()
+    // First visit to SCAN: auto-run on default TF so the board isn't empty
+    if (m === 'scanner') {
+      const { scannerStatus, scannerMetrics, runScanner } = get()
+      if (scannerStatus === 'idle' && scannerMetrics.length === 0) {
+        void runScanner()
+      }
+    }
   },
   connection: 'idle',
   error: null,
@@ -154,8 +203,12 @@ export const useMarketStore = create<MarketState>((set, get) => ({
   regime: null,
   sectors: [],
   focusSymbol: boot.symbol ?? 'BTCUSDT',
-  setFocusSymbol: (s) => {
-    set({ focusSymbol: s, mode: 'focus' })
+  setFocusSymbol: (s, opts) => {
+    if (opts?.interval) {
+      set({ focusSymbol: s, focusInterval: opts.interval, mode: 'focus' })
+    } else {
+      set({ focusSymbol: s, mode: 'focus' })
+    }
     void get().refreshFocus()
   },
   focusInterval: boot.interval ?? '1d',
@@ -171,8 +224,121 @@ export const useMarketStore = create<MarketState>((set, get) => ({
   livePrice: null,
   volumeProfile: null,
   watchLevels: [],
-  scannerFilter: 'all',
-  setScannerFilter: (f) => set({ scannerFilter: f }),
+
+  scannerInterval: '4h',
+  setScannerInterval: (i) => set({ scannerInterval: i }),
+  scannerMetrics: [],
+  scannerWatchLevels: [],
+  scannerStatus: 'idle',
+  scannerProgress: { done: 0, total: 0 },
+  scannerError: null,
+  scannerScannedAt: 0,
+
+  runScanner: async (intervalArg) => {
+    const interval = intervalArg ?? get().scannerInterval
+    const req = ++scannerRequestId
+    const { tickerList } = get()
+    if (!tickerList.length) {
+      set({ scannerStatus: 'error', scannerError: 'No tickers yet — wait for live book' })
+      return
+    }
+
+    const limit = scannerBarLimit(interval)
+    const universe = tickerList.slice(0, SCANNER_UNIVERSE)
+    // Always include BTC for relative strength baseline
+    if (!universe.some((t) => t.symbol === 'BTCUSDT')) {
+      const btc = tickerList.find((t) => t.symbol === 'BTCUSDT')
+      if (btc) universe.unshift(btc)
+    }
+
+    set({
+      scannerInterval: interval,
+      scannerStatus: 'scanning',
+      scannerError: null,
+      scannerProgress: { done: 0, total: universe.length },
+    })
+
+    const avgVol =
+      tickerList.slice(0, 100).reduce((a, t) => a + t.quoteVolume, 0) /
+      Math.min(100, tickerList.length)
+
+    try {
+      // BTC first so RS is ready
+      let btcCandles: Candle[] = []
+      try {
+        btcCandles = await fetchKlines('BTCUSDT', interval, limit)
+        scannerCandleCache.set(scannerCacheKey(interval, 'BTCUSDT'), btcCandles)
+      } catch {
+        /* RS falls back to 0 */
+      }
+      if (req !== scannerRequestId) return
+
+      const btcWin = btcCandles.length >= 10 ? btcCandles : null
+      const btcOpen = btcWin?.[0]?.open ?? 0
+      const btcClose = btcWin?.[btcWin.length - 1]?.close ?? 0
+      const btcChange =
+        btcOpen > 0 && btcClose > 0 ? ((btcClose - btcOpen) / btcOpen) * 100 : 0
+
+      let done = 0
+      // Batch concurrent fetches so 200 pairs finish in ~30–40s instead of minutes
+      for (let i = 0; i < universe.length; i += SCANNER_FETCH_CONCURRENCY) {
+        if (req !== scannerRequestId) return
+        const batch = universe.slice(i, i + SCANNER_FETCH_CONCURRENCY)
+        await Promise.all(
+          batch.map(async (t) => {
+            const key = scannerCacheKey(interval, t.symbol)
+            try {
+              if (t.symbol === 'BTCUSDT' && btcCandles.length) {
+                scannerCandleCache.set(key, btcCandles)
+              } else {
+                const k = await fetchKlines(t.symbol, interval, limit)
+                scannerCandleCache.set(key, k)
+              }
+            } catch {
+              scannerCandleCache.delete(key)
+            }
+          }),
+        )
+        done = Math.min(universe.length, i + batch.length)
+        set({ scannerProgress: { done, total: universe.length } })
+        await sleep(40)
+      }
+      if (req !== scannerRequestId) return
+
+      const metrics: CoinMetrics[] = []
+      const watch: WatchLevel[] = []
+      for (const t of universe) {
+        const candles = scannerCandleCache.get(scannerCacheKey(interval, t.symbol))
+        if (!candles?.length) continue
+        metrics.push(
+          buildCoinMetrics(t, candles, btcChange, avgVol, { scanInterval: interval }),
+        )
+        // Structure levels on the same TF window
+        if (watch.length < 50) {
+          const swings = findSwingLevels(candles, 2, 6)
+          const vp = volumeProfile(candles, 32)
+          const merged = [...swings, ...profileLevels(vp)]
+          watch.push(...nearestWatchLevels(t.symbol, t.base, t.lastPrice, merged, 2))
+        }
+      }
+      watch.sort((a, b) => Math.abs(a.distancePct) - Math.abs(b.distancePct))
+
+      set({
+        scannerMetrics: metrics.sort((a, b) => b.setupScore - a.setupScore),
+        scannerWatchLevels: watch.slice(0, 40),
+        scannerStatus: 'ready',
+        scannerProgress: { done: universe.length, total: universe.length },
+        scannerScannedAt: Date.now(),
+        scannerError: null,
+      })
+    } catch (e) {
+      if (req !== scannerRequestId) return
+      set({
+        scannerStatus: 'error',
+        scannerError: e instanceof Error ? e.message : 'Scan failed',
+      })
+    }
+  },
 
   lastRefresh: 0,
 

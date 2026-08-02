@@ -38,18 +38,49 @@ function hasLayoutSize(el: HTMLElement | null): boolean {
   return w >= 40 && h >= 40
 }
 
+/**
+ * Apply time-scale viewport: full history stays in the series (for S/R context),
+ * but optionally zoom to the last `visibleBars` candles.
+ */
+function applyViewport(chart: IChartApi, barCount: number, visibleBars?: number) {
+  if (barCount < 1) return
+  if (visibleBars != null && visibleBars > 0 && barCount > visibleBars) {
+    const from = barCount - visibleBars
+    // Small right pad so the latest candle isn't flush against the edge
+    const to = barCount - 1 + 2
+    chart.timeScale().setVisibleLogicalRange({ from, to })
+    return
+  }
+  chart.timeScale().fitContent()
+}
+
+type NexusChartApi = {
+  applyZoom: (bars?: number) => void
+  barCount: number
+  visibleBars?: number
+}
+
+declare global {
+  interface Window {
+    __NEXUS_CHART__?: NexusChartApi
+  }
+}
+
 export function PriceChart({
   candles,
   trendlines,
   zones,
   livePrice,
   symbol,
+  visibleBars,
 }: {
   candles: Candle[]
   trendlines: Trendline[]
   zones: WatchZone[]
   livePrice?: number
   symbol: string
+  /** When set, zoom to the last N bars instead of fitContent (full data still loaded). */
+  visibleBars?: number
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -59,7 +90,26 @@ export function PriceChart({
   const lastBarTimeRef = useRef(0)
   /** Re-fit once the host gets a non-zero size after data was applied. */
   const needsFitRef = useRef(false)
+  const barCountRef = useRef(0)
+  const visibleBarsRef = useRef(visibleBars)
+  visibleBarsRef.current = visibleBars
   const [zoneBoxes, setZoneBoxes] = useState<ZoneBox[]>([])
+
+  const publishChartApi = () => {
+    window.__NEXUS_CHART__ = {
+      barCount: barCountRef.current,
+      visibleBars: visibleBarsRef.current,
+      applyZoom: (bars?: number) => {
+        const chart = chartRef.current
+        if (!chart || barCountRef.current < 1) return
+        const n = bars ?? visibleBarsRef.current
+        if (bars != null && Number.isFinite(bars) && bars > 0) {
+          visibleBarsRef.current = Math.floor(bars)
+        }
+        applyViewport(chart, barCountRef.current, n)
+      },
+    }
+  }
 
   useEffect(() => {
     const el = containerRef.current
@@ -106,6 +156,7 @@ export function PriceChart({
     })
     chartRef.current = chart
     seriesRef.current = series
+    publishChartApi()
 
     const fitIfNeeded = () => {
       if (!needsFitRef.current || !hasLayoutSize(el)) return
@@ -117,7 +168,8 @@ export function PriceChart({
             needsFitRef.current = true
             return
           }
-          chartRef.current.timeScale().fitContent()
+          applyViewport(chartRef.current, barCountRef.current, visibleBarsRef.current)
+          publishChartApi()
         })
       })
     }
@@ -137,6 +189,7 @@ export function PriceChart({
       trendSeriesRef.current = null
       structureKeyRef.current = ''
       needsFitRef.current = false
+      if (window.__NEXUS_CHART__) delete window.__NEXUS_CHART__
     }
   }, [])
 
@@ -208,6 +261,7 @@ export function PriceChart({
       series.setData(bars)
       structureKeyRef.current = structureKey
       lastBarTimeRef.current = lastT
+      barCountRef.current = bars.length
 
       if (trendSeriesRef.current) {
         chart.removeSeries(trendSeriesRef.current)
@@ -243,6 +297,7 @@ export function PriceChart({
 
       // Always schedule a fit; apply immediately only if layout is ready
       needsFitRef.current = true
+      publishChartApi()
       if (hasLayoutSize(el)) {
         needsFitRef.current = false
         requestAnimationFrame(() => {
@@ -252,7 +307,8 @@ export function PriceChart({
               needsFitRef.current = true
               return
             }
-            chartRef.current.timeScale().fitContent()
+            applyViewport(chartRef.current, barCountRef.current, visibleBarsRef.current)
+            publishChartApi()
           })
         })
       }
@@ -260,8 +316,18 @@ export function PriceChart({
       const last = candles[candles.length - 1]!
       series.update(toBar(last))
       lastBarTimeRef.current = last.time
+      barCountRef.current = candles.length
+      publishChartApi()
     }
   }, [candles, trendlines, symbol])
+
+  // Re-zoom when visibleBars changes (e.g. snapshot deep-link) without reloading series
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart || barCountRef.current < 1) return
+    applyViewport(chart, barCountRef.current, visibleBars)
+    publishChartApi()
+  }, [visibleBars])
 
   // Live price tick (may arrive slightly ahead of candle batch)
   useEffect(() => {

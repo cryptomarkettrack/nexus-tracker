@@ -9,7 +9,16 @@ export interface BootParams {
   interval?: Interval
   /** Clean layout for Telegram / headless screenshots */
   snapshot: boolean
+  /**
+   * How many recent candles to show in the chart viewport.
+   * Full history is still loaded for S/R / zone detection — this only controls zoom.
+   * Snapshot mode defaults to SNAPSHOT_VISIBLE_BARS when unset.
+   */
+  visibleBars?: number
 }
+
+/** Default zoom window for Telegram / snapshot captures (keeps S/R from full history). */
+export const SNAPSHOT_VISIBLE_BARS = 90
 
 function isMode(v: string | null): v is Mode {
   return v != null && (MODES as string[]).includes(v)
@@ -29,6 +38,13 @@ export function normalizeSymbol(raw: string | null | undefined): string | null {
   return s
 }
 
+function parsePositiveInt(raw: string | null): number | undefined {
+  if (raw == null || raw === '') return undefined
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 1) return undefined
+  return Math.floor(n)
+}
+
 export function readBootParams(search = typeof window !== 'undefined' ? window.location.search : ''): BootParams {
   const p = new URLSearchParams(search)
   const modeRaw = p.get('mode')
@@ -38,11 +54,15 @@ export function readBootParams(search = typeof window !== 'undefined' ? window.l
     p.get('snapshot') === '1' ||
     p.get('snapshot') === 'true' ||
     p.get('shot') === '1'
+  const visibleBars =
+    parsePositiveInt(p.get('bars') ?? p.get('visibleBars')) ??
+    (snapshot ? SNAPSHOT_VISIBLE_BARS : undefined)
 
   return {
     mode: isMode(modeRaw) ? modeRaw : symbol ? 'focus' : undefined,
     symbol: symbol ?? undefined,
     interval: isInterval(intervalRaw) ? intervalRaw : undefined,
     snapshot,
+    visibleBars,
   }
 }

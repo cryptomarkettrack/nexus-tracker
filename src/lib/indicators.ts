@@ -374,19 +374,65 @@ function classifySetup(m: {
   return candidates.sort((a, b) => b.score - a.score)[0]!
 }
 
+/** Percent change + range stats over a candle window (for SCAN TFs). */
+export function candleWindowStats(candles: Candle[]): {
+  changePct: number
+  rangePosition: number
+  distanceToHigh: number
+  distanceToLow: number
+  last: number
+} | null {
+  if (!candles.length) return null
+  const first = candles[0]!
+  const lastC = candles[candles.length - 1]!
+  const last = lastC.close
+  const open = first.open > 0 ? first.open : first.close
+  let hi = -Infinity
+  let lo = Infinity
+  for (const c of candles) {
+    if (c.high > hi) hi = c.high
+    if (c.low < lo) lo = c.low
+  }
+  if (!(hi > lo) || !(open > 0) || !(last > 0)) return null
+  const range = hi - lo
+  return {
+    changePct: ((last - open) / open) * 100,
+    rangePosition: (last - lo) / range,
+    distanceToHigh: ((hi - last) / hi) * 100,
+    distanceToLow: ((last - lo) / last) * 100,
+    last,
+  }
+}
+
 export function buildCoinMetrics(
   ticker: Ticker24h,
   candles: Candle[] | undefined,
   btcChange: number,
   avgQuoteVolume: number,
+  opts?: { scanInterval?: import('./types').Interval },
 ): CoinMetrics {
   const closes = candles?.map((c) => c.close) ?? []
   const vols = candles?.map((c) => c.quoteVolume) ?? []
   const r = closes.length ? rsi(closes) : 50
   const a = candles?.length ? atr(candles) : ticker.highPrice - ticker.lowPrice
-  const atrPct = ticker.lastPrice > 0 ? (a / ticker.lastPrice) * 100 : 0
-  const range = ticker.highPrice - ticker.lowPrice
-  const rangePosition = range > 0 ? (ticker.lastPrice - ticker.lowPrice) / range : 0.5
+  const price = ticker.lastPrice || closes[closes.length - 1] || 0
+  const atrPct = price > 0 ? (a / price) * 100 : 0
+
+  // Prefer TF window when we have enough candles (SCAN); else 24h ticker book
+  const win = candles && candles.length >= 10 ? candleWindowStats(candles) : null
+  const changePct = win?.changePct ?? ticker.priceChangePercent
+  const rangePosition =
+    win?.rangePosition ??
+    (ticker.highPrice - ticker.lowPrice > 0
+      ? (ticker.lastPrice - ticker.lowPrice) / (ticker.highPrice - ticker.lowPrice)
+      : 0.5)
+  const distanceToHigh =
+    win?.distanceToHigh ??
+    (ticker.highPrice > 0 ? ((ticker.highPrice - ticker.lastPrice) / ticker.highPrice) * 100 : 0)
+  const distanceToLow =
+    win?.distanceToLow ??
+    (ticker.lastPrice > 0 ? ((ticker.lastPrice - ticker.lowPrice) / ticker.lastPrice) * 100 : 0)
+
   const volMean = vols.length ? sma(vols, Math.min(20, vols.length)) : avgQuoteVolume
   const volumeAnomaly =
     volMean > 0
@@ -397,18 +443,14 @@ export function buildCoinMetrics(
   const candleAnomaly = volMean > 0 && lastCandleVol > 0 ? lastCandleVol / volMean : volumeAnomaly
   const va = candles?.length ? candleAnomaly : volumeAnomaly
 
-  const relStrengthBtc = ticker.priceChangePercent - btcChange
-  const distanceToHigh =
-    ticker.highPrice > 0 ? ((ticker.highPrice - ticker.lastPrice) / ticker.highPrice) * 100 : 0
-  const distanceToLow =
-    ticker.lastPrice > 0 ? ((ticker.lastPrice - ticker.lowPrice) / ticker.lastPrice) * 100 : 0
+  const relStrengthBtc = changePct - btcChange
   const spreadBps =
     ticker.lastPrice > 0 && ticker.bidPrice && ticker.askPrice
       ? ((ticker.askPrice - ticker.bidPrice) / ticker.lastPrice) * 10000
       : 0
 
   const setup = classifySetup({
-    change24h: ticker.priceChangePercent,
+    change24h: changePct,
     volumeAnomaly: va,
     rsi: r,
     rangePosition,
@@ -420,11 +462,7 @@ export function buildCoinMetrics(
     0,
     Math.min(
       100,
-      50 +
-        ticker.priceChangePercent * 3 +
-        relStrengthBtc * 2 +
-        (r - 50) * 0.4 +
-        (va > 1.5 ? 8 : 0),
+      50 + changePct * 3 + relStrengthBtc * 2 + (r - 50) * 0.4 + (va > 1.5 ? 8 : 0),
     ),
   )
 
@@ -432,7 +470,7 @@ export function buildCoinMetrics(
     symbol: ticker.symbol,
     base: ticker.base,
     price: ticker.lastPrice,
-    change24h: ticker.priceChangePercent,
+    change24h: changePct,
     quoteVolume: ticker.quoteVolume,
     volumeAnomaly: va,
     relStrengthBtc,
@@ -448,6 +486,7 @@ export function buildCoinMetrics(
     distanceToLow,
     spreadBps,
     trades: ticker.count,
+    scanInterval: opts?.scanInterval,
   }
 }
 

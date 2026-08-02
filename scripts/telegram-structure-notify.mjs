@@ -9,6 +9,8 @@
  *   DASHBOARD_URL        — default http://127.0.0.1:4173 (vite preview)
  *   NOTIFY_INTERVAL      — chart TF: 4h | 1d | … (default 4h)
  *   NOTIFY_SYMBOLS       — comma list (default BTCUSDT,ETHUSDT)
+ *   NOTIFY_VISIBLE_BARS  — zoom chart to last N candles in screenshot (default 90).
+ *                          Full history still drives S/R / watch zones in the caption.
  *   NOTIFY_AFTER_CLOSE_MS — ms after each 4h UTC close before capture (default 120000)
  *   START_PREVIEW        — "1" to auto-run `vite preview` if URL is local
  *   HEADLESS             — "0" to show browser (default 1)
@@ -42,6 +44,11 @@ const SYMBOLS = (process.env.NOTIFY_SYMBOLS || 'BTCUSDT,ETHUSDT')
   .map((s) => s.trim().toUpperCase())
   .filter(Boolean)
   .map((s) => (s.endsWith('USDT') ? s : `${s}USDT`))
+/** Zoom screenshot to last N bars; full kline history still used for zone detection. */
+const VISIBLE_BARS = (() => {
+  const n = Number(process.env.NOTIFY_VISIBLE_BARS ?? 90)
+  return Number.isFinite(n) && n >= 10 ? Math.floor(n) : 90
+})()
 const LOOP = process.argv.includes('--loop') || process.env.NOTIFY_LOOP === '1'
 /** Binance 4h candles close on UTC multiples of 4h (00/04/08/12/16/20). */
 const CANDLE_MS = 4 * 60 * 60 * 1000
@@ -154,9 +161,16 @@ async function waitForHttp(url, timeoutMs = 60_000) {
 }
 
 async function ensurePreviewServer() {
+  // Always rebuild so bars=/zoom and structure UI match current source.
+  // (Reusing a long-lived preview without rebuild is why zoom can look "stuck" on old code.)
+  if (START_PREVIEW || isLocalUrl(DASHBOARD_URL)) {
+    console.log('Building production bundle…')
+    await run('npm', ['run', 'build'], ROOT)
+  }
+
   try {
     await waitForHttp(DASHBOARD_URL, 3_000)
-    console.log(`Using existing server at ${DASHBOARD_URL}`)
+    console.log(`Using existing server at ${DASHBOARD_URL} (fresh dist)`)
     return null
   } catch {
     /* start one */
@@ -165,10 +179,6 @@ async function ensurePreviewServer() {
   if (!START_PREVIEW && !isLocalUrl(DASHBOARD_URL)) {
     throw new Error(`Dashboard not reachable: ${DASHBOARD_URL}`)
   }
-
-  // Always rebuild so snapshot deep-links match latest FOCUS UI
-  console.log('Building production bundle…')
-  await run('npm', ['run', 'build'], ROOT)
 
   console.log(`Starting vite preview → ${DASHBOARD_URL}`)
   const child = spawn(
@@ -333,7 +343,12 @@ async function sendMessage(text) {
 }
 
 async function captureSymbol(browser, symbol) {
-  const url = `${DASHBOARD_URL}/?mode=focus&symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(CHART_INTERVAL)}&snapshot=1`
+  const url =
+    `${DASHBOARD_URL}/?mode=focus` +
+    `&symbol=${encodeURIComponent(symbol)}` +
+    `&interval=${encodeURIComponent(CHART_INTERVAL)}` +
+    `&snapshot=1` +
+    `&bars=${VISIBLE_BARS}`
   const page = await browser.newPage({
     viewport: { width: 1440, height: 900 },
     deviceScaleFactor: 2,
@@ -351,8 +366,27 @@ async function captureSymbol(browser, symbol) {
       null,
       { timeout: 90_000 },
     )
-    // Extra frame for chart paint / zone overlays
-    await sleep(1500)
+    // Wait for chart API + force zoom so screenshots never depend on a race with fitContent
+    await page.waitForFunction(
+      () => window.__NEXUS_CHART__ && window.__NEXUS_CHART__.barCount > 0,
+      null,
+      { timeout: 30_000 },
+    )
+    const zoomInfo = await page.evaluate((bars) => {
+      const api = window.__NEXUS_CHART__
+      if (!api) return null
+      api.applyZoom(bars)
+      const range = (() => {
+        // logical range isn't exposed on our API; return counts for logs
+        return { barCount: api.barCount, visibleBars: bars }
+      })()
+      return range
+    }, VISIBLE_BARS)
+    console.log(
+      `  chart zoom → last ${zoomInfo?.visibleBars ?? VISIBLE_BARS} of ${zoomInfo?.barCount ?? '?'} bars`,
+    )
+    // Let LWC repaint after setVisibleLogicalRange
+    await sleep(800)
 
     const structure = await page.evaluate(() => window.__NEXUS_STRUCTURE__ ?? null)
     const target = page.locator('[data-testid="focus-structure"]')
@@ -380,7 +414,7 @@ async function captureSymbol(browser, symbol) {
 
 async function runOnce(browser) {
   console.log(`\nNEXUS structure notify · ${new Date().toISOString()}`)
-  console.log(`pairs: ${SYMBOLS.join(', ')} · tf: ${CHART_INTERVAL}`)
+  console.log(`pairs: ${SYMBOLS.join(', ')} · tf: ${CHART_INTERVAL} · bars: ${VISIBLE_BARS}`)
   const results = []
   for (const symbol of SYMBOLS) {
     try {

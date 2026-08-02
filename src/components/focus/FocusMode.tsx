@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { readBootParams } from '../../lib/bootParams'
 import { formatPrice } from '../../lib/indicators'
 import { buildTradePlan } from '../../lib/tradePlan'
 import type { Interval, WatchZone } from '../../lib/types'
@@ -8,6 +9,7 @@ import { PriceChart } from './PriceChart'
 import { TradeDesk } from './TradeDesk'
 
 const INTERVALS: Interval[] = ['5m', '15m', '1h', '4h', '1d', '1w']
+const boot = readBootParams()
 
 /**
  * Focus layout (UX):
@@ -343,6 +345,7 @@ export function FocusMode() {
                 zones={watchZones}
                 livePrice={livePrice ?? undefined}
                 symbol={focusSymbol}
+                visibleBars={boot.visibleBars}
               />
             </div>
           ) : (
